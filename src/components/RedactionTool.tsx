@@ -300,14 +300,18 @@ export function RedactionTool() {
 
                             minX = Math.min(minX, x);
                             maxX = Math.max(maxX, x + w);
-                            topY = Math.min(topY, y - h);
-                            bottomY = Math.max(bottomY, y);
+                            
+                            const itemTop = y - (h * 0.75);
+                            const itemBottom = y + (h * 0.15);
+
+                            topY = Math.min(topY, itemTop);
+                            bottomY = Math.max(bottomY, itemBottom);
                         });
 
                         const boxX = minX;
                         const boxWidth = maxX - minX;
-                        const boxY = page.getHeight() - bottomY;
                         const boxHeight = bottomY - topY;
+                        const boxY = page.getHeight() - bottomY;
 
                         page.drawRectangle({
                             x: boxX,
@@ -376,8 +380,12 @@ export function RedactionTool() {
                             
                             minX = Math.min(minX, x);
                             maxX = Math.max(maxX, x + w);
-                            topY = Math.min(topY, y - h);
-                            bottomY = Math.max(bottomY, y);
+                            
+                            const itemTop = y - (h * 0.75);
+                            const itemBottom = y + (h * 0.15);
+
+                            topY = Math.min(topY, itemTop);
+                            bottomY = Math.max(bottomY, itemBottom);
                         });
     
                         const boxX = minX;
