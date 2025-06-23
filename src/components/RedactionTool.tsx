@@ -152,15 +152,33 @@ export function RedactionTool() {
             const buffer = e.target?.result as ArrayBuffer;
             if (buffer) {
                 try {
+                    // Proactively check for encryption with pdf-lib before loading with pdf.js
+                    try {
+                        await PDFDocument.load(buffer.slice(0));
+                    } catch (err: any) {
+                        if (err.constructor.name === 'EncryptedPDFError') {
+                            toast({ variant: 'destructive', title: 'Encrypted PDF', description: 'This document is encrypted and cannot be modified.' });
+                            handleReset();
+                            return;
+                        }
+                        // Rethrow other errors from pdf-lib
+                        throw err;
+                    }
+
                     setOriginalPdf(buffer);
                     const bufferForParsing = buffer.slice(0);
                     const pdf = await pdfjsLib.getDocument({ data: bufferForParsing }).promise;
                     setPdfDocument(pdf);
                     setCurrentPageNumber(1);
                     toast({ title: 'PDF Loaded', description: `"${file.name}" has been loaded successfully.` });
-                } catch (error) {
+                } catch (error: any) {
                     console.error("Failed to parse PDF:", error);
-                    toast({ variant: 'destructive', title: 'PDF Parsing Error', description: 'Could not read the content of the PDF file.' });
+                    if (error.name === 'PasswordException') {
+                        toast({ variant: 'destructive', title: 'Encrypted PDF', description: 'This document is password-protected and cannot be loaded.' });
+                    } else {
+                        toast({ variant: 'destructive', title: 'PDF Parsing Error', description: 'Could not read the content of the PDF file.' });
+                    }
+                    handleReset();
                 } finally {
                     setIsParsing(false);
                 }
@@ -510,5 +528,3 @@ export function RedactionTool() {
         </div>
     );
 }
-
-    
