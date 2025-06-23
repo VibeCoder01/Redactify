@@ -7,6 +7,9 @@ import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -40,6 +43,9 @@ export function RedactionTool() {
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     
+    const [isEncryptDialogOpen, setIsEncryptDialogOpen] = useState(false);
+    const [encryptionPassword, setEncryptionPassword] = useState("");
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
@@ -86,12 +92,14 @@ export function RedactionTool() {
     }, [pdfDocument, currentPageNumber, renderPage]);
 
     useEffect(() => {
-        setPanOffset({ x: 0, y: 0 }); // Reset pan on page change
+        if (pdfDocument) {
+            setPanOffset({ x: 0, y: 0 }); // Reset pan on page change
+        }
     }, [pdfDocument, currentPageNumber]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (!pdfDocument) return;
+            if (!pdfDocument || isEncryptDialogOpen) return;
 
             e.preventDefault();
             switch (e.key) {
@@ -122,7 +130,7 @@ export function RedactionTool() {
                 viewportElement.removeEventListener('keydown', handleKeyDown);
             }
         };
-    }, [pdfDocument]);
+    }, [pdfDocument, isEncryptDialogOpen]);
 
     const handleFileUpload = async (file: File | null | undefined) => {
         if (!file) return;
@@ -249,6 +257,8 @@ export function RedactionTool() {
         setCurrentPageNumber(1);
         setIsDownloading(null);
         setPanOffset({x: 0, y: 0});
+        setEncryptionPassword("");
+        setIsEncryptDialogOpen(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
     
@@ -267,21 +277,41 @@ export function RedactionTool() {
 
     const handleDownloadRecoverable = async () => {
         if (!originalPdf || redactions.length === 0) return;
+        setEncryptionPassword('');
+        setIsEncryptDialogOpen(true);
+    };
 
+    const handleConfirmEncryption = async () => {
+        if (!originalPdf || !encryptionPassword) {
+            toast({
+                variant: 'destructive',
+                title: 'Password Required',
+                description: 'Please enter a password to encrypt the PDF.',
+            });
+            return;
+        }
+
+        setIsEncryptDialogOpen(false);
         setIsDownloading('recoverable');
         try {
             const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
             await applyRedactionsToPdf(pdfDoc);
-            const pdfBytes = await pdfDoc.save();
-            downloadPdf(pdfBytes, 'redacted-document-recoverable.pdf');
-            toast({ title: "Download Ready", description: "Your recoverable PDF has been downloaded." });
+            
+            const pdfBytes = await pdfDoc.save({
+                userPassword: encryptionPassword
+            });
+
+            downloadPdf(pdfBytes, 'redacted-document-recoverable-encrypted.pdf');
+            toast({ title: "Download Ready", description: "Your encrypted PDF has been downloaded." });
         } catch (error) {
-            console.error("Failed to create recoverable redacted PDF:", error);
-            toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the recoverable PDF.' });
+            console.error("Failed to create encrypted redacted PDF:", error);
+            toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the encrypted PDF.' });
         } finally {
             setIsDownloading(null);
+            setEncryptionPassword('');
         }
     };
+
 
     const handleDownloadSecure = async () => {
         if (!originalPdf || redactions.length === 0) return;
@@ -395,7 +425,7 @@ export function RedactionTool() {
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent>
                                         <DropdownMenuItem onClick={handleDownloadRecoverable} disabled={!!isDownloading}>
-                                            Recoverable
+                                            Recoverable (Encrypted)
                                         </DropdownMenuItem>
                                         <DropdownMenuItem onClick={handleDownloadSecure} disabled={!!isDownloading}>
                                             Secure (Flattened)
@@ -412,7 +442,7 @@ export function RedactionTool() {
             </Card>
 
             <Card>
-                 <CardContent
+                 <div
                     ref={viewportRef}
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
@@ -475,7 +505,7 @@ export function RedactionTool() {
                             </div>
                         ) : null}
                     </div>
-                </CardContent>
+                </div>
             </Card>
 
             <input
@@ -485,6 +515,39 @@ export function RedactionTool() {
                 style={{ display: 'none' }}
                 accept="application/pdf"
             />
+
+            <Dialog open={isEncryptDialogOpen} onOpenChange={setIsEncryptDialogOpen}>
+                <DialogContent className="sm:max-w-[425px]">
+                    <DialogHeader>
+                        <DialogTitle>Encrypt Recoverable PDF</DialogTitle>
+                        <DialogDescription>
+                            Enter a password to protect your recoverable PDF. This password will be required to open the document.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label htmlFor="password" className="text-right">
+                                Password
+                            </Label>
+                            <Input
+                                id="password"
+                                type="password"
+                                value={encryptionPassword}
+                                onChange={(e) => setEncryptionPassword(e.target.value)}
+                                className="col-span-3"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        handleConfirmEncryption();
+                                    }
+                                }}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button type="submit" onClick={handleConfirmEncryption} disabled={!encryptionPassword}>Encrypt and Download</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
