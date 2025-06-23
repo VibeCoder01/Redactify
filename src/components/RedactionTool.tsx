@@ -64,13 +64,14 @@ export function RedactionTool() {
                 .filter(r => r.pageIndex === pageNum - 1)
                 .forEach(r => {
                     const pageViewport = page.getViewport({ scale: 1.0 });
-                    const scaleX = canvas.width / pageViewport.width;
-                    const scaleY = canvas.height / pageViewport.height;
+                    const renderScale = canvas.width / pageViewport.width;
 
-                    const canvasX = r.x * scaleX;
-                    const canvasY = canvas.height - (r.y + r.height) * scaleY;
-                    const canvasWidth = r.width * scaleX;
-                    const canvasHeight = r.height * scaleY;
+                    const canvasX = r.x * renderScale;
+                    // pdf-lib origin is bottom-left, canvas origin is top-left.
+                    // Convert y-coordinate from PDF space to canvas space.
+                    const canvasY = canvas.height - (r.y + r.height) * renderScale;
+                    const canvasWidth = r.width * renderScale;
+                    const canvasHeight = r.height * renderScale;
                     context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
         }
@@ -171,18 +172,16 @@ export function RedactionTool() {
         if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current) return;
         
         const page = await pdfDocument.getPage(currentPageNumber);
-        const renderViewport = page.getViewport({ scale: 2.0 });
         
         const pageViewport = page.getViewport({ scale: 1.0 });
-        const scaleX = canvasRef.current.width / pageViewport.width;
-        const scaleY = canvasRef.current.height / pageViewport.height;
+        const renderScale = canvasRef.current.width / pageViewport.width;
 
-        // Transform from screen canvas coords (origin top-left) to PDF points (origin bottom-left)
         const pdfCoords = {
-            x: currentDrawing.x / scaleX,
-            y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / scaleY,
-            width: currentDrawing.width / scaleX,
-            height: currentDrawing.height / scaleY
+            x: currentDrawing.x / renderScale,
+            // Convert y-coordinate from canvas space (origin top-left) to PDF space (origin bottom-left)
+            y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / renderScale,
+            width: currentDrawing.width / renderScale,
+            height: currentDrawing.height / renderScale
         };
 
         setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
@@ -256,14 +255,14 @@ export function RedactionTool() {
                 context.fillStyle = 'black';
 
                 const pageViewport = page.getViewport({ scale: 1.0 });
-                const scaleX = canvas.width / pageViewport.width;
-                const scaleY = canvas.height / pageViewport.height;
+                const renderScale = canvas.width / pageViewport.width;
 
                 pageRedactions.forEach(r => {
-                    const canvasX = r.x * scaleX;
-                    const canvasY = canvas.height - (r.y + r.height) * scaleY;
-                    const canvasWidth = r.width * scaleX;
-                    const canvasHeight = r.height * scaleY;
+                     // Convert y-coordinate from PDF space to canvas space.
+                    const canvasX = r.x * renderScale;
+                    const canvasY = canvas.height - (r.y + r.height) * renderScale;
+                    const canvasWidth = r.width * renderScale;
+                    const canvasHeight = r.height * renderScale;
                     context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
     
@@ -416,7 +415,7 @@ export function RedactionTool() {
                     onDragLeave={handleDragLeave}
                     className={cn("transition-colors relative p-0")}
                 >
-                    <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20 flex items-center justify-center">
+                    <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20">
                         {documentViewer}
                     </ScrollArea>
                 </CardContent>
