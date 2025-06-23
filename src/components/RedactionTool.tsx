@@ -89,7 +89,7 @@ export function RedactionTool() {
         if (pdfDocument) {
             renderPage(currentPageNumber);
         }
-    }, [pdfDocument, currentPageNumber, renderPage]);
+    }, [pdfDocument, currentPageNumber, renderPage, redactions]);
 
     useEffect(() => {
         if (pdfDocument) {
@@ -196,8 +196,8 @@ export function RedactionTool() {
     };
 
     const getMousePos = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!interactionRef.current) return {x: 0, y: 0};
-        const rect = interactionRef.current.getBoundingClientRect();
+        if (!canvasRef.current) return {x: 0, y: 0};
+        const rect = canvasRef.current.getBoundingClientRect();
         return {
           x: e.clientX - rect.left,
           y: e.clientY - rect.top
@@ -302,7 +302,7 @@ export function RedactionTool() {
             });
 
             downloadPdf(pdfBytes, 'redacted-document-recoverable-encrypted.pdf');
-            toast({ title: "Download Ready", description: "Your encrypted PDF has been downloaded." });
+            toast({ title: "Encryption Successful", description: "The PDF is now password-protected. Try opening the downloaded file to verify." });
         } catch (error) {
             console.error("Failed to create encrypted redacted PDF:", error);
             toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the encrypted PDF.' });
