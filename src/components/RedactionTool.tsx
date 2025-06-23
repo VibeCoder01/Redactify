@@ -32,7 +32,7 @@ export function RedactionTool() {
     const [redactionTerms, setRedactionTerms] = useState<string[]>([]);
     const [suggestedTerms, setSuggestedTerms] = useState<string[]>([]);
     const [isSuggesting, startSuggestionTransition] = useTransition();
-    const [isDownloading, setIsDownloading] = useState(false);
+    const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isParsing, setIsParsing] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
@@ -173,30 +173,119 @@ export function RedactionTool() {
         setSuggestedTerms([]);
         setOriginalPdf(null);
         setPdfTextItems([]);
+        setIsDownloading(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
         }
     };
+    
+    const handleDownloadRecoverable = async () => {
+        if (!originalPdf || redactionTerms.length === 0) return;
 
-    const handleDownload = async () => {
+        setIsDownloading('recoverable');
+        try {
+            const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
+            const pages = pdfDoc.getPages();
+            const allTerms = [...new Set(redactionTerms)];
+
+            const searchableTextChars: string[] = [];
+            const charToItemMap: number[] = [];
+            pdfTextItems.forEach((item, index) => {
+                const text = item.str;
+                for (let i = 0; i < text.length; i++) {
+                    const char = text[i];
+                    if (char.trim() !== '') {
+                        searchableTextChars.push(char);
+                        charToItemMap.push(index);
+                    }
+                }
+            });
+            const searchableText = searchableTextChars.join('').toLowerCase();
+    
+            for (const term of allTerms) {
+                const termToSearch = term.replace(/\s/g, '').toLowerCase();
+                if (termToSearch.length === 0) continue;
+    
+                let startIndex = 0;
+                let foundIndex;
+    
+                while ((foundIndex = searchableText.indexOf(termToSearch, startIndex)) > -1) {
+                    const firstItemIdx = charToItemMap[foundIndex];
+                    const lastItemIdx = charToItemMap[foundIndex + termToSearch.length - 1];
+                    const matchedItems = pdfTextItems.slice(firstItemIdx, lastItemIdx + 1);
+    
+                    if (matchedItems.length > 0) {
+                        const pageIndex = matchedItems[0].pageIndex;
+                        if (matchedItems.every(item => item.pageIndex === pageIndex)) {
+                            const page = pages[pageIndex];
+                            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    
+                            matchedItems.forEach(item => {
+                                const [x, y, w, h] = [item.transform[4], item.transform[5], item.width, item.height];
+                                minX = Math.min(minX, x);
+                                maxX = Math.max(maxX, x + w);
+                                minY = Math.min(minY, y);
+                                maxY = Math.max(maxY, y + h);
+                            });
+    
+                            const textBlockHeight = maxY - minY;
+                            const boxX = minX - 2;
+                            const boxWidth = (maxX - minX) + 4;
+                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.25);
+                            const boxHeight = textBlockHeight * 1.6;
+
+                            page.drawRectangle({
+                                x: boxX,
+                                y: boxY,
+                                width: boxWidth,
+                                height: boxHeight,
+                                color: rgb(0, 0, 0),
+                            });
+                        }
+                    }
+                    startIndex = foundIndex + 1;
+                }
+            }
+
+            const pdfBytes = await pdfDoc.save();
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'redacted-document-recoverable.pdf';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+
+            toast({
+                title: "Download Ready",
+                description: "Your recoverable PDF has been downloaded.",
+            });
+        } catch (error) {
+            console.error("Failed to create recoverable redacted PDF:", error);
+            toast({
+                variant: 'destructive',
+                title: 'Download Error',
+                description: 'Could not generate the recoverable PDF.',
+            });
+        } finally {
+            setIsDownloading(null);
+        }
+    };
+
+    const handleDownloadSecure = async (type: 'flattened' | 'image') => {
         if (!originalPdf || redactionTerms.length === 0) return;
     
-        setIsDownloading(true);
+        setIsDownloading(type);
         try {
-            // Create a new PDF to hold the flattened, secure pages
             const newPdfDoc = await PDFDocument.create();
-            
-            // Load the original PDF with pdf-js to render it
             const pdfToRender = await pdfjsLib.getDocument({ data: originalPdf.slice(0) }).promise;
-    
-            // We need to load the original PDF with pdf-lib as well to get accurate page dimensions
             const originalPdfDocForCoords = await PDFDocument.load(originalPdf.slice(0));
             const originalPages = originalPdfDocForCoords.getPages();
     
             const redactionAreasByPage: { [pageIndex: number]: { x: number; y: number; width: number; height: number }[] } = {};
             const allTerms = [...new Set(redactionTerms)];
     
-            // This logic finds all text occurrences and calculates their bounding boxes for redaction
             const searchableTextChars: string[] = [];
             const charToItemMap: number[] = [];
             pdfTextItems.forEach((item, index) => {
@@ -253,10 +342,9 @@ export function RedactionTool() {
                 }
             }
     
-            // Render each page to a canvas, draw redactions, and add as an image to the new PDF
             for (let i = 0; i < pdfToRender.numPages; i++) {
                 const page = await pdfToRender.getPage(i + 1);
-                const viewport = page.getViewport({ scale: 2.0 }); // Use a higher scale for better quality
+                const viewport = page.getViewport({ scale: 2.0 }); 
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 canvas.height = viewport.height;
@@ -294,7 +382,7 @@ export function RedactionTool() {
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = 'redacted-document-secure.pdf';
+            link.download = `redacted-document-${type}.pdf`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -312,10 +400,9 @@ export function RedactionTool() {
                 description: 'Could not generate the secure redacted PDF.',
             });
         } finally {
-            setIsDownloading(false);
+            setIsDownloading(null);
         }
     };
-    
 
     const highlightedDocument = useMemo(() => {
         if (!documentText && !isParsing) {
@@ -394,7 +481,7 @@ export function RedactionTool() {
             <div className="lg:col-span-1 flex flex-col gap-6">
                 <Card>
                     <CardHeader><CardTitle>Controls</CardTitle></CardHeader>
-                    <CardContent className="grid gap-4">
+                    <CardContent className="grid gap-2">
                         <input
                             type="file"
                             ref={fileInputRef}
@@ -410,9 +497,17 @@ export function RedactionTool() {
                             {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
                             Smart Suggestion
                         </Button>
-                         <Button onClick={handleDownload} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || isDownloading}>
-                            {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-                            Download Redacted PDF
+                         <Button onClick={() => handleDownloadRecoverable()} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
+                            {isDownloading === 'recoverable' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                            Download (Recoverable)
+                        </Button>
+                         <Button onClick={() => handleDownloadSecure('flattened')} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
+                            {isDownloading === 'flattened' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                            Download (Flattened)
+                        </Button>
+                         <Button onClick={() => handleDownloadSecure('image')} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
+                            {isDownloading === 'image' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                            Download (Image-based)
                         </Button>
                     </CardContent>
                     <CardFooter>
