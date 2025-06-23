@@ -6,7 +6,6 @@ import * as pdfjsLib from "pdfjs-dist";
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +23,8 @@ interface RedactionArea {
     height: number;
 }
 
+const PAN_SPEED = 50;
+
 export function RedactionTool() {
     const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
     const [pdfDocument, setPdfDocument] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -37,10 +38,12 @@ export function RedactionTool() {
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isParsing, setIsParsing] = useState(false);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
+    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
+    const viewportRef = useRef<HTMLDivElement>(null);
 
     const { toast } = useToast();
     
@@ -68,8 +71,6 @@ export function RedactionTool() {
                     const renderScale = canvas.width / pageViewport.width;
 
                     const canvasX = r.x * renderScale;
-                    // pdf-lib origin is bottom-left, canvas origin is top-left.
-                    // Convert y-coordinate from PDF space to canvas space.
                     const canvasY = canvas.height - (r.y + r.height) * renderScale;
                     const canvasWidth = r.width * renderScale;
                     const canvasHeight = r.height * renderScale;
@@ -81,8 +82,44 @@ export function RedactionTool() {
     useEffect(() => {
         if (pdfDocument) {
             renderPage(currentPageNumber);
+            setPanOffset({ x: 0, y: 0 }); // Reset pan on page change
         }
-    }, [pdfDocument, currentPageNumber, renderPage, redactions]);
+    }, [pdfDocument, currentPageNumber, renderPage]);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!pdfDocument) return;
+
+            e.preventDefault();
+            switch (e.key) {
+                case 'ArrowUp':
+                    setPanOffset(p => ({ ...p, y: p.y + PAN_SPEED }));
+                    break;
+                case 'ArrowDown':
+                    setPanOffset(p => ({ ...p, y: p.y - PAN_SPEED }));
+                    break;
+                case 'ArrowLeft':
+                    setPanOffset(p => ({ ...p, x: p.x + PAN_SPEED }));
+                    break;
+                case 'ArrowRight':
+                    setPanOffset(p => ({ ...p, x: p.x - PAN_SPEED }));
+                    break;
+            }
+        };
+
+        const viewportElement = viewportRef.current;
+        if (viewportElement) {
+            viewportElement.addEventListener('keydown', handleKeyDown);
+            // Set focus to the viewport to receive key events
+            viewportElement.focus();
+        }
+
+        return () => {
+            if (viewportElement) {
+                viewportElement.removeEventListener('keydown', handleKeyDown);
+            }
+        };
+    }, [pdfDocument]);
 
     const handleFileUpload = async (file: File | null | undefined) => {
         if (!file) return;
@@ -189,7 +226,6 @@ export function RedactionTool() {
 
         const pdfCoords = {
             x: currentDrawing.x / renderScale,
-            // Convert y-coordinate from canvas space (origin top-left) to PDF space (origin bottom-left)
             y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / renderScale,
             width: currentDrawing.width / renderScale,
             height: currentDrawing.height / renderScale
@@ -208,6 +244,7 @@ export function RedactionTool() {
         setRedactions([]);
         setCurrentPageNumber(1);
         setIsDownloading(null);
+        setPanOffset({x: 0, y: 0});
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
     
@@ -269,7 +306,6 @@ export function RedactionTool() {
                 const renderScale = canvas.width / pageViewport.width;
 
                 pageRedactions.forEach(r => {
-                     // Convert y-coordinate from PDF space to canvas space.
                     const canvasX = r.x * renderScale;
                     const canvasY = canvas.height - (r.y + r.height) * renderScale;
                     const canvasWidth = r.width * renderScale;
@@ -318,54 +354,6 @@ export function RedactionTool() {
         URL.revokeObjectURL(link.href);
     };
 
-    const documentViewer = (
-        <>
-            {(isParsing || (isDraggingOver && !pdfDocument)) && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 z-10 rounded-md">
-                    {isParsing ? (
-                        <>
-                            <Loader2 className="h-12 w-12 text-muted-foreground animate-spin" />
-                            <h3 className="mt-4 text-lg font-semibold text-foreground">Parsing PDF...</h3>
-                            <p className="mt-1 text-muted-foreground">Please wait while we process your document.</p>
-                        </>
-                    ) : (
-                        <>
-                            <FileUp className="h-12 w-12 text-muted-foreground" />
-                            <h3 className="mt-4 text-lg font-semibold text-foreground">Drop to Upload</h3>
-                        </>
-                    )}
-                </div>
-            )}
-            {!pdfDocument && !isParsing && (
-                <div 
-                    className="flex h-full min-h-[60vh] items-center justify-center text-center cursor-pointer"
-                    onClick={() => fileInputRef.current?.click()}
-                >
-                    <div>
-                        <FileUp className="mx-auto h-12 w-12 text-muted-foreground" />
-                        <h3 className="mt-2 text-sm font-semibold text-foreground">Upload a Document</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">Drag & drop or click to upload a PDF.</p>
-                    </div>
-                </div>
-            )}
-            {pdfDocument && (
-                 <div ref={interactionRef} className="relative cursor-crosshair" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-                    <canvas ref={canvasRef} />
-                    {isDrawing && currentDrawing && (
-                        <div className="absolute border-2 border-dashed border-primary bg-primary/20 pointer-events-none"
-                            style={{
-                                left: currentDrawing.x,
-                                top: currentDrawing.y,
-                                width: currentDrawing.width,
-                                height: currentDrawing.height
-                            }}
-                        />
-                    )}
-                 </div>
-            )}
-        </>
-    );
-
     return (
         <div className="flex flex-col gap-6">
             <Card>
@@ -382,10 +370,10 @@ export function RedactionTool() {
                                         <ChevronRight className="h-4 w-4" />
                                     </Button>
                                 </div>
-                                <p className="text-sm text-muted-foreground hidden md:block">Click and drag on the document to draw redaction boxes.</p>
+                                <p className="text-sm text-muted-foreground hidden md:block">Click and drag to redact. Use arrow keys to navigate.</p>
                             </div>
                         ) : (
-                             <p className="text-sm text-muted-foreground">Upload a PDF by clicking or dragging into the area below.</p>
+                             <p className="text-sm text-muted-foreground">Upload a PDF to begin.</p>
                         )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -412,7 +400,7 @@ export function RedactionTool() {
                                 </DropdownMenu>
                             </>
                         )}
-                        <Button variant="destructive" onClick={handleReset} disabled={!pdfDocument}>
+                         <Button variant="destructive" onClick={handleReset} disabled={!pdfDocument && !isParsing}>
                             <Trash2 className="mr-2 h-4 w-4" /> Reset
                         </Button>
                     </div>
@@ -420,19 +408,69 @@ export function RedactionTool() {
             </Card>
 
             <Card>
-                <CardContent 
+                 <CardContent
+                    ref={viewportRef}
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
-                    className={cn("transition-colors relative p-0")}
-                >
-                    <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20">
-                        <div className="relative w-full h-full">
-                           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                                {documentViewer}
+                    tabIndex={-1}
+                    className={cn(
+                        "transition-colors relative p-0 h-[70vh] w-full rounded-md border bg-muted/20 overflow-hidden focus:outline-none",
+                    )}
+                 >
+                    {pdfDocument && (
+                         <div
+                            className="relative transition-transform duration-100 ease-out"
+                            style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}
+                        >
+                            <div
+                                ref={interactionRef}
+                                className="relative cursor-crosshair"
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                            >
+                                <canvas ref={canvasRef} />
+                                {isDrawing && currentDrawing && (
+                                    <div
+                                        className="absolute border-2 border-dashed border-primary bg-primary/20 pointer-events-none"
+                                        style={{
+                                            left: currentDrawing.x,
+                                            top: currentDrawing.y,
+                                            width: currentDrawing.width,
+                                            height: currentDrawing.height,
+                                        }}
+                                    />
+                                )}
                             </div>
                         </div>
-                    </ScrollArea>
+                    )}
+
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+                        {isParsing ? (
+                            <div className="bg-background/80 p-8 rounded-md">
+                                <Loader2 className="h-12 w-12 text-muted-foreground animate-spin" />
+                                <h3 className="mt-4 text-lg font-semibold text-foreground">Parsing PDF...</h3>
+                                <p className="mt-1 text-muted-foreground">Please wait while we process your document.</p>
+                            </div>
+                        ) : isDraggingOver && !pdfDocument ? (
+                            <div className="bg-background/80 p-8 rounded-md">
+                                <FileUp className="h-12 w-12 text-muted-foreground" />
+                                <h3 className="mt-4 text-lg font-semibold text-foreground">Drop to Upload</h3>
+                            </div>
+                        ) : !pdfDocument ? (
+                            <div
+                                className="h-full w-full flex flex-col items-center justify-center cursor-pointer pointer-events-auto"
+                                onClick={() => fileInputRef.current?.click()}
+                            >
+                                <FileUp className="mx-auto h-12 w-12 text-muted-foreground" />
+                                <h3 className="mt-2 text-sm font-semibold text-foreground">Upload a Document</h3>
+                                <p className="mt-1 text-sm text-muted-foreground">Drag & drop or click to upload a PDF.</p>
+                                <p className="mt-4 text-xs text-muted-foreground">Use arrow keys to navigate the document.</p>
+                            </div>
+                        ) : null}
+                    </div>
                 </CardContent>
             </Card>
 
