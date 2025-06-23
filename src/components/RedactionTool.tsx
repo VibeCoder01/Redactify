@@ -64,13 +64,12 @@ export function RedactionTool() {
             redactions
                 .filter(r => r.pageIndex === pageNum - 1)
                 .forEach(r => {
-                    const scaledRect = {
-                        x: r.x * viewport.scale,
-                        y: r.y * viewport.scale,
-                        width: r.width * viewport.scale,
-                        height: r.height * viewport.scale,
-                    };
-                    context.fillRect(scaledRect.x, scaledRect.y, scaledRect.width, scaledRect.height);
+                    // `r` is in PDF points (origin bottom-left). Convert to canvas coords (origin top-left).
+                    const canvasX = r.x * viewport.scale;
+                    const canvasY = viewport.height - (r.y + r.height) * viewport.scale;
+                    const canvasWidth = r.width * viewport.scale;
+                    const canvasHeight = r.height * viewport.scale;
+                    context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
         }
     }, [pdfDocument, redactions]);
@@ -79,7 +78,7 @@ export function RedactionTool() {
         if (pdfDocument) {
             renderPage(currentPageNumber);
         }
-    }, [pdfDocument, currentPageNumber, renderPage]);
+    }, [pdfDocument, currentPageNumber, renderPage, redactions]);
 
     const handleFileUpload = async (file: File | null | undefined) => {
         if (!file) return;
@@ -128,14 +127,14 @@ export function RedactionTool() {
         e.preventDefault();
         e.stopPropagation();
         setIsDraggingOver(false);
-        if (pdfDocument) return;
+        if (isParsing || pdfDocument) return;
         handleFileUpload(e.dataTransfer.files?.[0]);
     };
 
     const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!pdfDocument) setIsDraggingOver(true);
+        if (!isParsing && !pdfDocument) setIsDraggingOver(true);
     };
 
     const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
@@ -145,7 +144,7 @@ export function RedactionTool() {
     };
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!interactionRef.current) return;
+        if (!interactionRef.current || !pdfDocument) return;
         const rect = interactionRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -262,15 +261,21 @@ export function RedactionTool() {
     
                 const imageBytes = await new Promise<Uint8Array>((resolve) => {
                     canvas.toBlob(blob => {
+                        if (!blob) {
+                            resolve(new Uint8Array());
+                            return;
+                        }
                         const reader = new FileReader();
                         reader.onloadend = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
-                        reader.readAsArrayBuffer(blob!);
+                        reader.readAsArrayBuffer(blob);
                     }, 'image/png');
                 });
     
-                const pngImage = await newPdfDoc.embedPng(imageBytes);
-                const newPage = newPdfDoc.addPage([viewport.width, viewport.height]);
-                newPage.drawImage(pngImage, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+                if (imageBytes.length > 0) {
+                    const pngImage = await newPdfDoc.embedPng(imageBytes);
+                    const newPage = newPdfDoc.addPage([viewport.width, viewport.height]);
+                    newPage.drawImage(pngImage, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+                }
             }
     
             const pdfBytes = await newPdfDoc.save();
@@ -297,11 +302,20 @@ export function RedactionTool() {
 
     const documentViewer = (
         <>
-            {isParsing && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 z-10">
-                    <Loader2 className="h-12 w-12 text-muted-foreground animate-spin" />
-                    <h3 className="mt-4 text-lg font-semibold text-foreground">Parsing PDF...</h3>
-                    <p className="mt-1 text-muted-foreground">Please wait while we process your document.</p>
+            {(isParsing || (isDraggingOver && !pdfDocument)) && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 z-10 rounded-md">
+                    {isParsing ? (
+                        <>
+                            <Loader2 className="h-12 w-12 text-muted-foreground animate-spin" />
+                            <h3 className="mt-4 text-lg font-semibold text-foreground">Parsing PDF...</h3>
+                            <p className="mt-1 text-muted-foreground">Please wait while we process your document.</p>
+                        </>
+                    ) : (
+                        <>
+                            <FileUp className="h-12 w-12 text-muted-foreground" />
+                            <h3 className="mt-4 text-lg font-semibold text-foreground">Drop to Upload</h3>
+                        </>
+                    )}
                 </div>
             )}
             {!pdfDocument && !isParsing && (
@@ -345,14 +359,14 @@ export function RedactionTool() {
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
-                    className={cn("transition-colors relative", isDraggingOver && !pdfDocument && "bg-primary/10")}
+                    className={cn("transition-colors relative p-0")}
                 >
                     <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 flex items-center justify-center">
                         {documentViewer}
                     </ScrollArea>
                 </CardContent>
                 {pdfDocument && (
-                    <CardFooter className="justify-between items-center">
+                    <CardFooter className="justify-between items-center pt-6">
                         <div className="flex items-center gap-2">
                             <Button variant="outline" size="icon" onClick={() => setCurrentPageNumber(p => Math.max(1, p - 1))} disabled={currentPageNumber <= 1}>
                                 <ChevronLeft className="h-4 w-4" />
@@ -406,5 +420,3 @@ export function RedactionTool() {
         </div>
     );
 }
-
-    
