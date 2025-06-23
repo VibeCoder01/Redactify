@@ -238,8 +238,8 @@ export function RedactionTool() {
                             
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = minY - (textBlockHeight * 0.2); // Shift down from baseline
-                            const boxHeight = textBlockHeight * 1.4; // Make box taller than text block
+                            const boxY = minY - (textBlockHeight * 0.35); // Shift down from baseline
+                            const boxHeight = textBlockHeight * 1.6; // Make box taller than text block
 
                             page.drawRectangle({
                                 x: boxX,
@@ -254,6 +254,9 @@ export function RedactionTool() {
                     startIndex = foundIndex + 1;
                 }
             }
+            
+            // Flatten the PDF to make redactions permanent
+            pdfDoc.flatten();
 
             const pdfBytes = await pdfDoc.save();
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
