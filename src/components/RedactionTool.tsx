@@ -518,10 +518,6 @@ export function RedactionTool() {
                             {isDownloading === 'flattened' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
                             Download (Flattened)
                         </Button>
-                         <Button onClick={() => handleDownloadSecure('image')} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
-                            {isDownloading === 'image' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-                            Download (Image-based)
-                        </Button>
                     </CardContent>
                     <CardFooter>
                          <Button variant="destructive" className="w-full" onClick={handleReset}><Trash2 className="mr-2 h-4 w-4" /> Reset</Button>
@@ -571,3 +567,5 @@ export function RedactionTool() {
         </div>
     );
 }
+
+    
