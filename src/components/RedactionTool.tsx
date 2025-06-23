@@ -8,9 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { FileUp, Sparkles, Download, Loader2, X, Check, Trash2 } from "lucide-react";
+import { FileUp, Sparkles, Download, Loader2, X, Trash2 } from "lucide-react";
 import { suggestRedactionTerms } from "@/ai/flows/suggest-redaction-terms";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -234,48 +233,42 @@ export function RedactionTool() {
     
     const findMatchingTextItems = (term: string) => {
         const results: PdfTextItem[][] = [];
-        const termToSearch = term.toLowerCase();
-
+        const termToSearch = term.toLowerCase().replace(/\s/g, '');
+        if (!termToSearch) return [];
+    
         for (let i = 0; i < pdfTextItems.length; i++) {
             let buffer = '';
-            const matchedItems: PdfTextItem[] = [];
-
+            const potentialMatch: PdfTextItem[] = [];
+    
             for (let j = i; j < pdfTextItems.length; j++) {
                 const currentItem = pdfTextItems[j];
-                const prevItem = j > i ? pdfTextItems[j - 1] : null;
-
-                if (prevItem) {
-                    if (currentItem.pageIndex !== prevItem.pageIndex) break;
-
-                    const yDiff = Math.abs(currentItem.transform[5] - prevItem.transform[5]);
-                    const isNewLine = yDiff > currentItem.height * 0.5;
-                    if(isNewLine) break;
-
-                    const gap = currentItem.transform[4] - (prevItem.transform[4] + prevItem.width);
-                    if (gap > currentItem.height * 0.5) break; 
-                    
-                    if(gap > 0.1) { 
-                        buffer += ' ';
-                    }
-                }
-
-                buffer += currentItem.str;
-                matchedItems.push(currentItem);
-
-                if (buffer.toLowerCase().replace(/ /g, '') === termToSearch.replace(/ /g, '')) {
-                     if (buffer.toLowerCase() === termToSearch) {
-                        results.push(matchedItems);
-                        i = j; 
-                        break;
-                    }
+                const prevItem = j > i ? pdfTextItems[j-1] : null;
+    
+                if (prevItem && currentItem.pageIndex !== prevItem.pageIndex) {
+                    break; // Don't span pages
                 }
                 
-                if (buffer.length > term.length + 10) break;
+                const itemText = currentItem.str.toLowerCase();
+                buffer += itemText.replace(/\s/g, '');
+                potentialMatch.push(currentItem);
+    
+                if (buffer.startsWith(termToSearch)) {
+                    if (buffer === termToSearch) {
+                        // Exact match found
+                        results.push(potentialMatch);
+                        i = j; // Continue search after this match
+                        break;
+                    }
+                    // It's a prefix, continue accumulating
+                } else if (!termToSearch.startsWith(buffer)) {
+                    // This path is not going to lead to a match
+                    break;
+                }
             }
         }
         return results;
     };
-
+    
     const handleDownloadRecoverable = async () => {
         if (!originalPdf || redactionTerms.length === 0) return;
 
@@ -283,42 +276,37 @@ export function RedactionTool() {
         try {
             const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
             const pages = pdfDoc.getPages();
-            const allTerms = [...new Set(redactionTerms)];
     
-            for (const term of allTerms) {
+            for (const term of redactionTerms) {
                 const termMatches = findMatchingTextItems(term);
     
                 for (const matchedItems of termMatches) {
-                    if (matchedItems.length > 0) {
-                        const pageIndex = matchedItems[0].pageIndex;
-                        const page = pages[pageIndex];
-                        let minX = Infinity, maxX = -Infinity, topY = Infinity, bottomY = -Infinity;
+                    if (matchedItems.length === 0) continue;
 
-                        matchedItems.forEach(item => {
-                            const x = item.transform[4];
-                            const y = item.transform[5];
-                            const w = item.width;
-                            const h = item.height;
+                    const pageIndex = matchedItems[0].pageIndex;
+                    const page = pages[pageIndex];
+                    
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
-                            minX = Math.min(minX, x);
-                            maxX = Math.max(maxX, x + w);
-                            topY = Math.min(topY, y);
-                            bottomY = Math.max(bottomY, y + h);
-                        });
+                    matchedItems.forEach(item => {
+                        const x = item.transform[4];
+                        const y = item.transform[5];
+                        const width = item.width;
+                        const height = item.height;
 
-                        const boxX = minX;
-                        const boxWidth = maxX - minX;
-                        const boxHeight = bottomY - topY;
-                        const boxY = page.getHeight() - bottomY;
+                        minX = Math.min(minX, x);
+                        maxX = Math.max(maxX, x + width);
+                        minY = Math.min(minY, y);
+                        maxY = Math.max(maxY, y + height);
+                    });
 
-                        page.drawRectangle({
-                            x: boxX,
-                            y: boxY,
-                            width: boxWidth,
-                            height: boxHeight,
-                            color: rgb(0, 0, 0),
-                        });
-                    }
+                    page.drawRectangle({
+                        x: minX,
+                        y: minY,
+                        width: maxX - minX,
+                        height: maxY - minY,
+                        color: rgb(0, 0, 0),
+                    });
                 }
             }
 
@@ -348,44 +336,40 @@ export function RedactionTool() {
         }
     };
 
-    const handleDownloadSecure = async (type: 'flattened') => {
+    const handleDownloadSecure = async () => {
         if (!originalPdf || redactionTerms.length === 0) return;
     
-        setIsDownloading(type);
+        setIsDownloading('flattened');
         try {
             const newPdfDoc = await PDFDocument.create();
             const pdfToRender = await pdfjsLib.getDocument({ data: originalPdf.slice(0) }).promise;
-            const originalPdfDocForCoords = await PDFDocument.load(originalPdf.slice(0));
-            const originalPages = originalPdfDocForCoords.getPages();
     
             const redactionAreasByPage: { [pageIndex: number]: { x: number; y: number; width: number; height: number }[] } = {};
-            const allTerms = [...new Set(redactionTerms)];
     
-            for (const term of allTerms) {
+            for (const term of redactionTerms) {
                 const termMatches = findMatchingTextItems(term);
     
                 for (const matchedItems of termMatches) {
                     if (matchedItems.length > 0) {
                         const pageIndex = matchedItems[0].pageIndex;
-                        const page = originalPages[pageIndex];
-                        let minX = Infinity, maxX = -Infinity, topY = Infinity, bottomY = -Infinity;
+                        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
                         matchedItems.forEach(item => {
                             const x = item.transform[4];
                             const y = item.transform[5];
-                            const w = item.width;
-                            const h = item.height;
+                            const width = item.width;
+                            const height = item.height;
                             
                             minX = Math.min(minX, x);
-                            maxX = Math.max(maxX, x + w);
-                            topY = Math.min(topY, y);
-                            bottomY = Math.max(bottomY, y + h);
+                            maxX = Math.max(maxX, x + width);
+                            minY = Math.min(minY, y);
+                            maxY = Math.max(maxY, y + height);
                         });
     
                         const boxX = minX;
+                        const boxY = minY;
                         const boxWidth = maxX - minX;
-                        const boxY = page.getHeight() - bottomY;
-                        const boxHeight = bottomY - topY;
+                        const boxHeight = maxY - minY;
     
                         if (!redactionAreasByPage[pageIndex]) {
                             redactionAreasByPage[pageIndex] = [];
@@ -410,7 +394,12 @@ export function RedactionTool() {
                 const redactionAreas = redactionAreasByPage[i] || [];
                 context.fillStyle = 'black';
                 redactionAreas.forEach(area => {
-                    context.fillRect(area.x * viewport.scale, (viewport.height - area.y - area.height) * viewport.scale, area.width * viewport.scale, area.height * viewport.scale);
+                    // Transform PDF coords (bottom-left origin) to canvas coords (top-left origin)
+                    const canvasX = area.x * viewport.scale;
+                    const canvasY = viewport.height - (area.y + area.height) * viewport.scale;
+                    const canvasWidth = area.width * viewport.scale;
+                    const canvasHeight = area.height * viewport.scale;
+                    context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
     
                 const imageBytes = await new Promise<Uint8Array>((resolve) => {
@@ -435,7 +424,7 @@ export function RedactionTool() {
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = `redacted-document-${type}.pdf`;
+            link.download = `redacted-document-secure.pdf`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -549,7 +538,7 @@ export function RedactionTool() {
                                 <DropdownMenuItem onClick={() => handleDownloadRecoverable()} disabled={!!isDownloading}>
                                     Recoverable
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleDownloadSecure('flattened')} disabled={!!isDownloading}>
+                                <DropdownMenuItem onClick={() => handleDownloadSecure()} disabled={!!isDownloading}>
                                     Secure (Flattened)
                                 </DropdownMenuItem>
                             </DropdownMenuContent>
