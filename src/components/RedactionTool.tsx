@@ -22,8 +22,10 @@ interface PdfTextItem {
     str: string;
     dir: string;
     transform: number[];
-    width: number;
-    height: number;
+    width: number; // SCALED width
+    height: number; // SCALED height
+    x: number; // absolute x
+    y: number; // absolute y
     pageIndex: number;
 }
 
@@ -83,12 +85,15 @@ export function RedactionTool() {
                         
                         textContent.items.forEach(item => {
                             if ('str' in item && item.str.trim().length > 0) {
+                                const [scaleX, , , scaleY, x, y] = item.transform;
                                 items.push({
                                     str: item.str,
                                     dir: item.dir,
                                     transform: item.transform,
-                                    width: item.width,
-                                    height: item.height,
+                                    x: x,
+                                    y: y,
+                                    width: item.width * scaleX,
+                                    height: item.height, // height is already scaled
                                     pageIndex: pageNum - 1,
                                 });
                             }
@@ -284,28 +289,25 @@ export function RedactionTool() {
                 let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
                 matchedItems.forEach(item => {
-                    const [scaleX, , , scaleY, x, y] = item.transform;
-                    // item.transform gives the baseline. Bounding box is relative to that.
-                    const itemHeight = item.height; // This is the scaled height
-                    const itemWidth = item.width;   // This is the scaled width
+                    const x0 = item.x;
+                    const y0 = item.y;
+                    const x1 = item.x + item.width;
+                    const y1 = item.y + item.height;
 
-                    const boxBottom = y - margin;
-                    const boxTop = y + itemHeight + margin;
-                    const boxLeft = x - margin;
-                    const boxRight = x + itemWidth + margin;
-
-                    minX = Math.min(minX, boxLeft);
-                    maxX = Math.max(maxX, boxRight);
-                    minY = Math.min(minY, boxBottom);
-                    maxY = Math.max(maxY, boxTop);
+                    minX = Math.min(minX, x0);
+                    maxX = Math.max(maxX, x1);
+                    minY = Math.min(minY, y0);
+                    maxY = Math.max(maxY, y1);
                 });
                 
-                redactionAreasByPage[pageIndex].push({
-                    x: minX,
-                    y: minY,
-                    width: maxX - minX,
-                    height: maxY - minY,
-                });
+                if (isFinite(minX)) {
+                    redactionAreasByPage[pageIndex].push({
+                        x: minX - margin,
+                        y: minY - margin,
+                        width: (maxX - minX) + (2 * margin),
+                        height: (maxY - minY) + (2 * margin),
+                    });
+                }
             }
         }
         return redactionAreasByPage;
