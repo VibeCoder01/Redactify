@@ -43,6 +43,11 @@ export function RedactionTool() {
     const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
     const [pdfTextItems, setPdfTextItems] = useState<PdfTextItem[]>([]);
 
+    const allUniqueTerms = useMemo(() => {
+        const allTerms = [...new Set([...suggestedTerms, ...redactionTerms])];
+        return allTerms.sort((a, b) => a.localeCompare(b));
+    }, [suggestedTerms, redactionTerms]);
+
     const handleFileUpload = async (file: File | null | undefined) => {
         if (!file) {
             return;
@@ -57,14 +62,7 @@ export function RedactionTool() {
             return;
         }
 
-        // Reset state before loading new file
-        setDocumentText("");
-        setSelectedText("");
-        setRedactionTerms([]);
-        setSuggestedTerms([]);
-        setOriginalPdf(null);
-        setPdfTextItems([]);
-        setIsDownloading(null);
+        handleReset();
         setIsParsing(true);
 
         const reader = new FileReader();
@@ -159,7 +157,7 @@ export function RedactionTool() {
 
     const handleSelection = () => {
         const text = window.getSelection()?.toString().trim();
-        if (text && !redactionTerms.includes(text)) {
+        if (text && !allUniqueTerms.some(t => t.toLowerCase() === text.toLowerCase())) {
             setSelectedText(text);
         } else if (!text) {
             setSelectedText("");
@@ -170,16 +168,15 @@ export function RedactionTool() {
         const selection = window.getSelection();
         const text = selection?.toString().trim();
 
-        if (text && !redactionTerms.includes(text) && !suggestedTerms.includes(text)) {
+        if (text && !allUniqueTerms.some(t => t.toLowerCase() === text.toLowerCase())) {
             setSuggestedTerms(prev => [...new Set([text, ...prev])]);
             setSelectedText(""); // Prevents manual selection card from appearing
 
             toast({
-                title: "Suggestion Added",
-                description: `"${text}" has been added to your suggested terms.`,
+                title: "Term Added",
+                description: `"${text}" has been added to your identified terms.`,
             });
             
-            // Clear browser selection to avoid confusion
             if(selection) {
                 selection.removeAllRanges();
             }
@@ -192,7 +189,7 @@ export function RedactionTool() {
                 const result = await suggestRedactionTerms({ text: documentText });
                 if (result && result.terms) {
                     const newSuggestions = result.terms.filter(
-                        term => !redactionTerms.find(rt => rt.toLowerCase() === term.toLowerCase())
+                        term => !allUniqueTerms.some(t => t.toLowerCase() === term.toLowerCase())
                     );
                     setSuggestedTerms(prev => [...new Set([...prev, ...newSuggestions])]);
                     toast({
@@ -211,23 +208,16 @@ export function RedactionTool() {
         });
     };
     
-    const acceptSuggestion = useCallback((term: string) => {
-        setRedactionTerms(prev => [...new Set([...prev, term])]);
-        setSuggestedTerms(prev => prev.filter(t => t.toLowerCase() !== term.toLowerCase()));
+    const toggleRedactionStatus = useCallback((term: string) => {
+        setRedactionTerms(prevTerms => {
+            const termExists = prevTerms.some(t => t.toLowerCase() === term.toLowerCase());
+            if (termExists) {
+                return prevTerms.filter(t => t.toLowerCase() !== term.toLowerCase());
+            } else {
+                return [...prevTerms, term];
+            }
+        });
     }, []);
-
-    const toggleTermInViewer = useCallback((term: string) => {
-        const isRedacted = redactionTerms.some(rt => rt.toLowerCase() === term.toLowerCase());
-        if (isRedacted) {
-            // From redaction to suggestion
-            setRedactionTerms(prev => prev.filter(t => t.toLowerCase() !== term.toLowerCase()));
-            setSuggestedTerms(prev => [...new Set([term, ...prev])]);
-        } else {
-            // From suggestion to redaction
-            acceptSuggestion(term);
-        }
-    }, [redactionTerms, suggestedTerms, acceptSuggestion]);
-
 
     const handleReset = () => {
         setDocumentText("");
@@ -256,8 +246,7 @@ export function RedactionTool() {
             pdfTextItems.forEach((item, index) => {
                 const text = item.str;
                 for (let i = 0; i < text.length; i++) {
-                    const char = text[i];
-                    searchableTextChars.push(char);
+                    searchableTextChars.push(text[i]);
                     charToItemMap.push(index);
                 }
             });
@@ -270,7 +259,7 @@ export function RedactionTool() {
                 let startIndex = 0;
                 let foundIndex;
     
-                while ((foundIndex = searchableText.indexOf(termToSearch, startIndex)) > -1) {
+                while ((foundIndex = searchableText.indexOf(termToSearch, startIndex)) !== -1) {
                     const firstItemIdx = charToItemMap[foundIndex];
                     const lastItemIdx = charToItemMap[foundIndex + termToSearch.length - 1];
                     const matchedItems = pdfTextItems.slice(firstItemIdx, lastItemIdx + 1);
@@ -352,8 +341,7 @@ export function RedactionTool() {
             pdfTextItems.forEach((item, index) => {
                 const text = item.str;
                 for (let i = 0; i < text.length; i++) {
-                    const char = text[i];
-                    searchableTextChars.push(char);
+                    searchableTextChars.push(text[i]);
                     charToItemMap.push(index);
                 }
             });
@@ -366,7 +354,7 @@ export function RedactionTool() {
                 let startIndex = 0;
                 let foundIndex;
     
-                while ((foundIndex = searchableText.indexOf(termToSearch, startIndex)) > -1) {
+                while ((foundIndex = searchableText.indexOf(termToSearch, startIndex)) !== -1) {
                     const firstItemIdx = charToItemMap[foundIndex];
                     const lastItemIdx = charToItemMap[foundIndex + termToSearch.length - 1];
                     const matchedItems = pdfTextItems.slice(firstItemIdx, lastItemIdx + 1);
@@ -491,39 +479,30 @@ export function RedactionTool() {
             );
         }
 
-        const allTerms = [
-            ...redactionTerms.map(term => ({ term, type: 'redaction' })),
-            ...suggestedTerms.map(term => ({ term, type: 'suggestion' }))
-        ].filter(item => item.term.trim() !== '');
-
-        const uniqueAllTerms = [...new Map(allTerms.map(item => [item.term.toLowerCase(), item])).values()];
-
-        if (uniqueAllTerms.length === 0) {
+        if (allUniqueTerms.length === 0) {
             return <pre className="whitespace-pre-wrap font-sans text-sm">{documentText}</pre>;
         }
 
-        const regex = new RegExp(`(${uniqueAllTerms.map(item => item.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+        const regex = new RegExp(`(${allUniqueTerms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
         const parts = documentText.split(regex);
 
         return (
             <pre className="whitespace-pre-wrap font-sans text-sm">
                 {parts.map((part, index) => {
-                    const matchedTerm = uniqueAllTerms.find(t => t.term.toLowerCase() === part.toLowerCase());
+                    const matchedTerm = allUniqueTerms.find(t => t.toLowerCase() === part.toLowerCase());
                     if (matchedTerm) {
-                        const isRedaction = redactionTerms.some(rt => rt.toLowerCase() === part.toLowerCase());
-                        let className = 'rounded px-0.5 py-0.5 cursor-pointer';
-                        if (isRedaction) {
-                            className += ' bg-primary/30 line-through';
-                        } else {
-                            className += ' bg-accent/30 hover:bg-accent/50';
-                        }
-                        return <mark key={index} className={className} onClick={() => toggleTermInViewer(part)}>{part}</mark>;
+                        const isRedacted = redactionTerms.some(rt => rt.toLowerCase() === part.toLowerCase());
+                        const className = cn(
+                            'rounded px-0.5 py-0.5 cursor-pointer',
+                            isRedacted ? 'bg-primary/30 line-through' : 'bg-accent/30 hover:bg-accent/50'
+                        );
+                        return <mark key={index} className={className} onClick={() => toggleRedactionStatus(part)}>{part}</mark>;
                     }
                     return <span key={index}>{part}</span>;
                 })}
             </pre>
         );
-    }, [documentText, redactionTerms, suggestedTerms, isParsing, toggleTermInViewer]);
+    }, [documentText, redactionTerms, allUniqueTerms, isParsing, toggleRedactionStatus]);
 
 
     return (
@@ -588,64 +567,51 @@ export function RedactionTool() {
                         <CardContent><p className="text-sm font-mono p-2 bg-muted rounded">"{selectedText}"</p></CardContent>
                         <CardFooter className="gap-2">
                             <Button className="w-full" onClick={() => {
+                                setSuggestedTerms(prev => [...new Set([...prev, selectedText])]);
                                 setRedactionTerms(prev => [...new Set([...prev, selectedText])]);
-                                setSuggestedTerms(prev => prev.filter(t => t.toLowerCase() !== selectedText.toLowerCase()));
                                 setSelectedText('');
-                            }}>Add to List</Button>
+                            }}>Add to Redaction List</Button>
                             <Button variant="ghost" size="icon" onClick={() => setSelectedText('')}><X className="h-4 w-4"/></Button>
                         </CardFooter>
                     </Card>
                 )}
                 
-                {suggestedTerms.length > 0 && (
+                {allUniqueTerms.length > 0 && (
                     <Card>
                         <CardHeader>
-                            <CardTitle>Suggested Terms</CardTitle>
-                            <CardDescription>Click a term to add it to the redaction list.</CardDescription>
+                            <CardTitle>Identified Terms</CardTitle>
+                            <CardDescription>Click to toggle redaction. Struck-through terms will be redacted.</CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <ScrollArea className="h-32">
+                            <ScrollArea className="h-40">
                                 <div className="flex flex-wrap gap-2">
-                                    {suggestedTerms.map((term, i) => (
-                                        <Badge
-                                            key={i}
-                                            variant="outline"
-                                            className="text-base font-normal cursor-pointer hover:bg-accent/20"
-                                            onClick={() => toggleTermInViewer(term)}
-                                        >
-                                            {term}
-                                        </Badge>
-                                    ))}
+                                    {allUniqueTerms.map((term, i) => {
+                                        const isRedacted = redactionTerms.some(rt => rt.toLowerCase() === term.toLowerCase());
+                                        return (
+                                            <Badge
+                                                key={i}
+                                                variant={isRedacted ? "default" : "outline"}
+                                                className={cn(
+                                                    "text-base font-normal cursor-pointer transition-all",
+                                                    isRedacted 
+                                                        ? "line-through decoration-2 hover:bg-primary/80" 
+                                                        : "hover:bg-accent/20"
+                                                )}
+                                                onClick={() => toggleRedactionStatus(term)}
+                                            >
+                                                {term}
+                                            </Badge>
+                                        );
+                                    })}
                                 </div>
                             </ScrollArea>
                         </CardContent>
+                         <CardFooter>
+                             <p className="text-sm text-muted-foreground">{redactionTerms.length} of {allUniqueTerms.length} terms will be redacted.</p>
+                        </CardFooter>
                     </Card>
                 )}
 
-                {redactionTerms.length > 0 && (
-                     <Card>
-                        <CardHeader>
-                            <CardTitle>Redaction List</CardTitle>
-                            <CardDescription>{redactionTerms.length} term(s) will be redacted. Click to remove.</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <ScrollArea className="h-32">
-                                <div className="flex flex-wrap gap-2">
-                                    {redactionTerms.map((term, i) => (
-                                        <Badge
-                                            key={i}
-                                            variant="default"
-                                            className="text-base font-normal cursor-pointer hover:bg-primary/80"
-                                            onClick={() => toggleTermInViewer(term)}
-                                        >
-                                            {term}
-                                        </Badge>
-                                    ))}
-                                </div>
-                            </ScrollArea>
-                        </CardContent>
-                    </Card>
-                )}
             </div>
         </div>
     );
