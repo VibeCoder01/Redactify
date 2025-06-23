@@ -63,11 +63,14 @@ export function RedactionTool() {
             redactions
                 .filter(r => r.pageIndex === pageNum - 1)
                 .forEach(r => {
-                    // `r` is in PDF points (origin bottom-left). Convert to canvas coords (origin top-left).
-                    const canvasX = r.x * viewport.scale;
-                    const canvasY = viewport.height - (r.y + r.height) * viewport.scale;
-                    const canvasWidth = r.width * viewport.scale;
-                    const canvasHeight = r.height * viewport.scale;
+                    const pageViewport = page.getViewport({ scale: 1.0 });
+                    const scaleX = canvas.width / pageViewport.width;
+                    const scaleY = canvas.height / pageViewport.height;
+
+                    const canvasX = r.x * scaleX;
+                    const canvasY = canvas.height - (r.y + r.height) * scaleY;
+                    const canvasWidth = r.width * scaleX;
+                    const canvasHeight = r.height * scaleY;
                     context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
         }
@@ -143,24 +146,20 @@ export function RedactionTool() {
     };
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!interactionRef.current || !pdfDocument) return;
-        const scrollContainer = interactionRef.current.parentElement;
-        if (!scrollContainer) return;
-        const rect = interactionRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left + scrollContainer.scrollLeft;
-        const y = e.clientY - rect.top + scrollContainer.scrollTop;
+        if (!canvasRef.current || !pdfDocument) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
         setIsDrawing(true);
         setDrawStartPoint({ x, y });
     };
-
+    
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!isDrawing || !drawStartPoint || !interactionRef.current) return;
-        const scrollContainer = interactionRef.current.parentElement;
-        if (!scrollContainer) return;
-        const rect = interactionRef.current.getBoundingClientRect();
-        const currentX = e.clientX - rect.left + scrollContainer.scrollLeft;
-        const currentY = e.clientY - rect.top + scrollContainer.scrollTop;
-
+        if (!isDrawing || !drawStartPoint || !canvasRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+    
         const x = Math.min(drawStartPoint.x, currentX);
         const y = Math.min(drawStartPoint.y, currentY);
         const width = Math.abs(currentX - drawStartPoint.x);
@@ -174,10 +173,11 @@ export function RedactionTool() {
         const page = await pdfDocument.getPage(currentPageNumber);
         const renderViewport = page.getViewport({ scale: 2.0 });
         
-        const scaleX = canvasRef.current.width / renderViewport.width;
-        const scaleY = canvasRef.current.height / renderViewport.height;
+        const pageViewport = page.getViewport({ scale: 1.0 });
+        const scaleX = canvasRef.current.width / pageViewport.width;
+        const scaleY = canvasRef.current.height / pageViewport.height;
 
-        // Transform from screen canvas coords to PDF points (origin bottom-left)
+        // Transform from screen canvas coords (origin top-left) to PDF points (origin bottom-left)
         const pdfCoords = {
             x: currentDrawing.x / scaleX,
             y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / scaleY,
@@ -252,14 +252,18 @@ export function RedactionTool() {
     
                 await page.render({ canvasContext: context, viewport }).promise;
     
-                // Draw redactions for this page onto the canvas
                 const pageRedactions = redactions.filter(r => r.pageIndex === i);
                 context.fillStyle = 'black';
+
+                const pageViewport = page.getViewport({ scale: 1.0 });
+                const scaleX = canvas.width / pageViewport.width;
+                const scaleY = canvas.height / pageViewport.height;
+
                 pageRedactions.forEach(r => {
-                    const canvasX = r.x * viewport.scale;
-                    const canvasY = viewport.height - (r.y + r.height) * viewport.scale;
-                    const canvasWidth = r.width * viewport.scale;
-                    const canvasHeight = r.height * viewport.scale;
+                    const canvasX = r.x * scaleX;
+                    const canvasY = canvas.height - (r.y + r.height) * scaleY;
+                    const canvasWidth = r.width * scaleX;
+                    const canvasHeight = r.height * scaleY;
                     context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
     
@@ -335,7 +339,7 @@ export function RedactionTool() {
                 </div>
             )}
             {pdfDocument && (
-                 <div ref={interactionRef} className="relative h-full cursor-crosshair" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+                 <div ref={interactionRef} className="relative cursor-crosshair" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
                     <canvas ref={canvasRef} />
                     {isDrawing && currentDrawing && (
                         <div className="absolute border-2 border-dashed border-primary bg-primary/20 pointer-events-none"
