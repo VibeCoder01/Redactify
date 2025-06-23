@@ -1,16 +1,14 @@
 
 "use client";
 
-import React, { useState, useTransition, useMemo, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { FileUp, Sparkles, Download, Loader2, X, Trash2 } from "lucide-react";
-import { suggestRedactionTerms } from "@/ai/flows/suggest-redaction-terms";
+import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -18,48 +16,76 @@ if (typeof window !== 'undefined') {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 }
 
-interface PdfTextItem {
-    str: string;
-    dir: string;
-    transform: number[];
-    width: number; // SCALED width
-    height: number; // SCALED height
-    x: number; // absolute x
-    y: number; // absolute y
+interface RedactionArea {
     pageIndex: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
 }
 
 export function RedactionTool() {
-    const [documentText, setDocumentText] = useState("");
-    const [selectedText, setSelectedText] = useState("");
-    const [redactionTerms, setRedactionTerms] = useState<string[]>([]);
-    const [suggestedTerms, setSuggestedTerms] = useState<string[]>([]);
-    const [isSuggesting, startSuggestionTransition] = useTransition();
+    const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
+    const [pdfDocument, setPdfDocument] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+    const [redactions, setRedactions] = useState<RedactionArea[]>([]);
+    
+    const [currentPageNumber, setCurrentPageNumber] = useState(1);
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [drawStartPoint, setDrawStartPoint] = useState<{ x: number, y: number } | null>(null);
+    const [currentDrawing, setCurrentDrawing] = useState<Omit<RedactionArea, "pageIndex"> | null>(null);
+
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isParsing, setIsParsing] = useState(false);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
+    
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const interactionRef = useRef<HTMLDivElement>(null);
     const { toast } = useToast();
+    
+    const totalPages = pdfDocument?.numPages ?? 0;
 
-    const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
-    const [pdfTextItems, setPdfTextItems] = useState<PdfTextItem[]>([]);
+    const renderPage = useCallback(async (pageNum: number) => {
+        if (!pdfDocument || !canvasRef.current) return;
+        
+        const page = await pdfDocument.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 2.0 });
+        const canvas = canvasRef.current;
+        const context = canvas.getContext('2d');
+        
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        if (context) {
+            await page.render({ canvasContext: context, viewport }).promise;
 
-    const allUniqueTerms = useMemo(() => {
-        const allTerms = [...new Set([...suggestedTerms, ...redactionTerms])];
-        return allTerms.sort((a, b) => a.localeCompare(b));
-    }, [suggestedTerms, redactionTerms]);
+            // Draw existing redactions for this page
+            context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            redactions
+                .filter(r => r.pageIndex === pageNum - 1)
+                .forEach(r => {
+                    const scaledRect = {
+                        x: r.x * viewport.scale,
+                        y: r.y * viewport.scale,
+                        width: r.width * viewport.scale,
+                        height: r.height * viewport.scale,
+                    };
+                    context.fillRect(scaledRect.x, scaledRect.y, scaledRect.width, scaledRect.height);
+                });
+        }
+    }, [pdfDocument, redactions]);
+
+    useEffect(() => {
+        if (pdfDocument) {
+            renderPage(currentPageNumber);
+        }
+    }, [pdfDocument, currentPageNumber, renderPage]);
 
     const handleFileUpload = async (file: File | null | undefined) => {
-        if (!file) {
-            return;
-        }
+        if (!file) return;
 
         if (file.type !== 'application/pdf') {
-            toast({
-                variant: 'destructive',
-                title: 'Invalid File Type',
-                description: 'Please upload a PDF file.',
-            });
+            toast({ variant: 'destructive', title: 'Invalid File Type', description: 'Please upload a PDF file.' });
             return;
         }
 
@@ -74,44 +100,12 @@ export function RedactionTool() {
                     setOriginalPdf(buffer);
                     const bufferForParsing = buffer.slice(0);
                     const pdf = await pdfjsLib.getDocument({ data: bufferForParsing }).promise;
-                    let fullText = "";
-                    const items: PdfTextItem[] = [];
-
-                    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-                        const page = await pdf.getPage(pageNum);
-                        const textContent = await page.getTextContent();
-                        
-                        fullText += textContent.items.map(item => 'str' in item ? item.str : '').join(" ") + "\n\n";
-                        
-                        textContent.items.forEach(item => {
-                            if ('str' in item && item.str.trim().length > 0) {
-                                const [scaleX, , , scaleY, x, y] = item.transform;
-                                items.push({
-                                    str: item.str,
-                                    dir: item.dir,
-                                    transform: item.transform,
-                                    x: x,
-                                    y: y,
-                                    width: item.width * scaleX,
-                                    height: item.height, // height is already scaled
-                                    pageIndex: pageNum - 1,
-                                });
-                            }
-                        });
-                    }
-                    setDocumentText(fullText);
-                    setPdfTextItems(items);
-                    toast({
-                        title: 'PDF Loaded',
-                        description: `"${file.name}" has been loaded successfully.`,
-                    });
+                    setPdfDocument(pdf);
+                    setCurrentPageNumber(1);
+                    toast({ title: 'PDF Loaded', description: `"${file.name}" has been loaded successfully.` });
                 } catch (error) {
                     console.error("Failed to parse PDF:", error);
-                    toast({
-                        variant: 'destructive',
-                        title: 'PDF Parsing Error',
-                        description: 'Could not read the content of the PDF file.',
-                    });
+                    toast({ variant: 'destructive', title: 'PDF Parsing Error', description: 'Could not read the content of the PDF file.' });
                 } finally {
                     setIsParsing(false);
                 }
@@ -119,11 +113,7 @@ export function RedactionTool() {
         };
         reader.onerror = () => {
             console.error('FileReader error');
-            toast({
-                variant: 'destructive',
-                title: 'File Read Error',
-                description: 'There was an error reading the file.',
-            });
+            toast({ variant: 'destructive', title: 'File Read Error', description: 'There was an error reading the file.' });
             setIsParsing(false);
         };
         reader.readAsArrayBuffer(file);
@@ -131,26 +121,21 @@ export function RedactionTool() {
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         handleFileUpload(event.target.files?.[0]);
-        if (fileInputRef.current) {
-            fileInputRef.current.value = "";
-        }
+        if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
     const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault();
         e.stopPropagation();
         setIsDraggingOver(false);
-        if (documentText) return;
-
+        if (pdfDocument) return;
         handleFileUpload(e.dataTransfer.files?.[0]);
     };
 
     const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!documentText) {
-            setIsDraggingOver(true);
-        }
+        if (!pdfDocument) setIsDraggingOver(true);
     };
 
     const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
@@ -159,218 +144,98 @@ export function RedactionTool() {
         setIsDraggingOver(false);
     };
 
-    const handleSelection = () => {
-        const text = window.getSelection()?.toString().trim();
-        if (text && !allUniqueTerms.some(t => t.toLowerCase() === text.toLowerCase())) {
-            setSelectedText(text);
-        } else if (!text) {
-            setSelectedText("");
-        }
-    };
-    
-    const handleDoubleClick = () => {
-        const selection = window.getSelection();
-        const text = selection?.toString().trim();
-
-        if (text && !allUniqueTerms.some(t => t.toLowerCase() === text.toLowerCase())) {
-            setSuggestedTerms(prev => [...new Set([text, ...prev])]);
-            setSelectedText(""); // Prevents manual selection card from appearing
-
-            toast({
-                title: "Term Added",
-                description: `"${text}" has been added to your identified terms.`,
-            });
-            
-            if(selection) {
-                selection.removeAllRanges();
-            }
-        }
+    const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!interactionRef.current) return;
+        const rect = interactionRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        setIsDrawing(true);
+        setDrawStartPoint({ x, y });
     };
 
-    const handleSuggest = () => {
-        startSuggestionTransition(async () => {
-            try {
-                const result = await suggestRedactionTerms({ text: documentText });
-                if (result && result.terms) {
-                    const newSuggestions = result.terms.filter(
-                        term => !allUniqueTerms.some(t => t.toLowerCase() === term.toLowerCase())
-                    );
-                    setSuggestedTerms(prev => [...new Set([...prev, ...newSuggestions])]);
-                    toast({
-                        title: "Suggestions Ready",
-                        description: `We've found ${newSuggestions.length} new terms you might want to redact.`,
-                    });
-                }
-            } catch (error) {
-                console.error("AI suggestion failed:", error);
-                toast({
-                    variant: "destructive",
-                    title: "Error",
-                    description: "Could not get suggestions from AI.",
-                });
-            }
-        });
+    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!isDrawing || !drawStartPoint || !interactionRef.current) return;
+        const rect = interactionRef.current.getBoundingClientRect();
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+
+        const x = Math.min(drawStartPoint.x, currentX);
+        const y = Math.min(drawStartPoint.y, currentY);
+        const width = Math.abs(currentX - drawStartPoint.x);
+        const height = Math.abs(currentY - drawStartPoint.y);
+        setCurrentDrawing({ x, y, width, height });
     };
-    
-    const toggleRedactionStatus = useCallback((term: string) => {
-        setRedactionTerms(prevTerms => {
-            const termExists = prevTerms.some(t => t.toLowerCase() === term.toLowerCase());
-            if (termExists) {
-                return prevTerms.filter(t => t.toLowerCase() !== term.toLowerCase());
-            } else {
-                return [...prevTerms, term];
-            }
-        });
-    }, []);
+
+    const handleMouseUp = async () => {
+        if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current) return;
+        
+        const page = await pdfDocument.getPage(currentPageNumber);
+        const viewport = page.getViewport({ scale: 1.0 }); // Use scale 1.0 for PDF coordinate space
+        const canvas = canvasRef.current;
+        const scale = viewport.width / canvas.width; // PDF points per canvas pixel
+
+        // Transform from canvas coords to PDF coords
+        const pdfCoords = {
+            x: currentDrawing.x * scale,
+            y: viewport.height - (currentDrawing.y + currentDrawing.height) * scale,
+            width: currentDrawing.width * scale,
+            height: currentDrawing.height * scale
+        };
+
+        setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
+        
+        setIsDrawing(false);
+        setDrawStartPoint(null);
+        setCurrentDrawing(null);
+    };
 
     const handleReset = () => {
-        setDocumentText("");
-        setSelectedText("");
-        setRedactionTerms([]);
-        setSuggestedTerms([]);
         setOriginalPdf(null);
-        setPdfTextItems([]);
+        setPdfDocument(null);
+        setRedactions([]);
+        setCurrentPageNumber(1);
         setIsDownloading(null);
-        if (fileInputRef.current) {
-            fileInputRef.current.value = "";
-        }
+        if (fileInputRef.current) fileInputRef.current.value = "";
     };
     
-    const findMatchingTextItems = (term: string) => {
-        const results: PdfTextItem[][] = [];
-        if (!term || !pdfTextItems.length) return results;
-    
-        const normalizedTerm = term.toLowerCase().replace(/\s+/g, "");
-    
-        for (let i = 0; i < pdfTextItems.length; i++) {
-            let buffer = "";
-            const potentialMatch: PdfTextItem[] = [];
-    
-            for (let j = i; j < pdfTextItems.length; j++) {
-                const currentItem = pdfTextItems[j];
-                const prevItem = j > i ? pdfTextItems[j - 1] : null;
-    
-                if (prevItem && currentItem.pageIndex !== prevItem.pageIndex) {
-                    break; 
-                }
-    
-                buffer += currentItem.str.toLowerCase().replace(/\s+/g, "");
-                potentialMatch.push(currentItem);
-    
-                if (buffer.startsWith(normalizedTerm)) {
-                    if (buffer === normalizedTerm) {
-                        results.push([...potentialMatch]);
-                        i = j; 
-                        break; 
-                    }
-                } else if (!normalizedTerm.startsWith(buffer)) {
-                    break; 
-                }
-            }
-        }
-        return results;
-    };
-    
-    const getRedactionAreasByPage = () => {
-        const redactionAreasByPage: { [pageIndex: number]: { x: number; y: number; width: number; height: number }[] } = {};
-        const margin = 1;
-
-        for (const term of redactionTerms) {
-            const termMatches = findMatchingTextItems(term);
-
-            for (const matchedItems of termMatches) {
-                if (matchedItems.length === 0) continue;
-
-                const pageIndex = matchedItems[0].pageIndex;
-                if (!redactionAreasByPage[pageIndex]) {
-                    redactionAreasByPage[pageIndex] = [];
-                }
-
-                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-                matchedItems.forEach(item => {
-                    const x0 = item.x;
-                    const y0 = item.y;
-                    const x1 = item.x + item.width;
-                    const y1 = item.y + item.height;
-
-                    minX = Math.min(minX, x0);
-                    maxX = Math.max(maxX, x1);
-                    minY = Math.min(minY, y0);
-                    maxY = Math.max(maxY, y1);
+    const applyRedactionsToPdf = async (pdfDoc: PDFDocument) => {
+        const pages = pdfDoc.getPages();
+        redactions.forEach(r => {
+            if (r.pageIndex < pages.length) {
+                const page = pages[r.pageIndex];
+                page.drawRectangle({
+                    ...r,
+                    color: rgb(0, 0, 0),
                 });
-                
-                if (isFinite(minX)) {
-                    redactionAreasByPage[pageIndex].push({
-                        x: minX - margin,
-                        y: minY - margin,
-                        width: (maxX - minX) + (2 * margin),
-                        height: (maxY - minY) + (2 * margin),
-                    });
-                }
             }
-        }
-        return redactionAreasByPage;
+        });
     }
 
-
     const handleDownloadRecoverable = async () => {
-        if (!originalPdf || redactionTerms.length === 0) return;
+        if (!originalPdf || redactions.length === 0) return;
 
         setIsDownloading('recoverable');
         try {
             const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
-            const pages = pdfDoc.getPages();
-            const redactionAreasByPage = getRedactionAreasByPage();
-    
-            for (const pageIndexStr in redactionAreasByPage) {
-                const pageIndex = parseInt(pageIndexStr, 10);
-                const page = pages[pageIndex];
-                const areas = redactionAreasByPage[pageIndex];
-                
-                areas.forEach(area => {
-                     page.drawRectangle({
-                        ...area,
-                        color: rgb(0, 0, 0),
-                    });
-                })
-            }
-
+            await applyRedactionsToPdf(pdfDoc);
             const pdfBytes = await pdfDoc.save();
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = 'redacted-document-recoverable.pdf';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(link.href);
-
-            toast({
-                title: "Download Ready",
-                description: "Your recoverable PDF has been downloaded.",
-            });
+            downloadPdf(pdfBytes, 'redacted-document-recoverable.pdf');
+            toast({ title: "Download Ready", description: "Your recoverable PDF has been downloaded." });
         } catch (error) {
             console.error("Failed to create recoverable redacted PDF:", error);
-            toast({
-                variant: 'destructive',
-                title: 'Download Error',
-                description: 'Could not generate the recoverable PDF.',
-            });
+            toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the recoverable PDF.' });
         } finally {
             setIsDownloading(null);
         }
     };
 
     const handleDownloadSecure = async () => {
-        if (!originalPdf || redactionTerms.length === 0) return;
+        if (!originalPdf || redactions.length === 0) return;
     
         setIsDownloading('flattened');
         try {
             const newPdfDoc = await PDFDocument.create();
             const pdfToRender = await pdfjsLib.getDocument({ data: originalPdf.slice(0) }).promise;
-    
-            const redactionAreasByPage = getRedactionAreasByPage();
     
             for (let i = 0; i < pdfToRender.numPages; i++) {
                 const page = await pdfToRender.getPage(i + 1);
@@ -384,14 +249,14 @@ export function RedactionTool() {
     
                 await page.render({ canvasContext: context, viewport }).promise;
     
-                const redactionAreas = redactionAreasByPage[i] || [];
+                // Draw redactions for this page onto the canvas
+                const pageRedactions = redactions.filter(r => r.pageIndex === i);
                 context.fillStyle = 'black';
-                redactionAreas.forEach(area => {
-                    // Transform PDF coords (bottom-left origin) to canvas coords (top-left origin)
-                    const canvasX = area.x * viewport.scale;
-                    const canvasY = viewport.height - (area.y + area.height) * viewport.scale;
-                    const canvasWidth = area.width * viewport.scale;
-                    const canvasHeight = area.height * viewport.scale;
+                pageRedactions.forEach(r => {
+                    const canvasX = r.x * viewport.scale;
+                    const canvasY = viewport.height - (r.y + r.height) * viewport.scale;
+                    const canvasWidth = r.width * viewport.scale;
+                    const canvasHeight = r.height * viewport.scale;
                     context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
     
@@ -405,45 +270,43 @@ export function RedactionTool() {
     
                 const pngImage = await newPdfDoc.embedPng(imageBytes);
                 const newPage = newPdfDoc.addPage([viewport.width, viewport.height]);
-                newPage.drawImage(pngImage, {
-                    x: 0,
-                    y: 0,
-                    width: viewport.width,
-                    height: viewport.height,
-                });
+                newPage.drawImage(pngImage, { x: 0, y: 0, width: viewport.width, height: viewport.height });
             }
     
             const pdfBytes = await newPdfDoc.save();
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = `redacted-document-secure.pdf`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(link.href);
-    
-            toast({
-                title: "Download Ready",
-                description: "Your securely redacted PDF has been downloaded.",
-            });
+            downloadPdf(pdfBytes, 'redacted-document-secure.pdf');
+            toast({ title: "Download Ready", description: "Your securely redacted PDF has been downloaded." });
         } catch (error) {
             console.error("Failed to create secure redacted PDF:", error);
-            toast({
-                variant: 'destructive',
-                title: 'Download Error',
-                description: 'Could not generate the secure redacted PDF.',
-            });
+            toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the secure PDF.' });
         } finally {
             setIsDownloading(null);
         }
     };
+    
+    const downloadPdf = (bytes: Uint8Array, filename: string) => {
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+    };
 
-    const highlightedDocument = useMemo(() => {
-        if (!documentText && !isParsing) {
-            return (
+    const documentViewer = (
+        <>
+            {isParsing && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 z-10">
+                    <Loader2 className="h-12 w-12 text-muted-foreground animate-spin" />
+                    <h3 className="mt-4 text-lg font-semibold text-foreground">Parsing PDF...</h3>
+                    <p className="mt-1 text-muted-foreground">Please wait while we process your document.</p>
+                </div>
+            )}
+            {!pdfDocument && !isParsing && (
                 <div 
-                    className="flex items-center justify-center h-full text-center cursor-pointer"
+                    className="flex h-full min-h-[60vh] items-center justify-center text-center cursor-pointer"
                     onClick={() => fileInputRef.current?.click()}
                 >
                     <div>
@@ -452,86 +315,76 @@ export function RedactionTool() {
                         <p className="mt-1 text-sm text-muted-foreground">Drag & drop or click to upload a PDF.</p>
                     </div>
                 </div>
-            );
-        }
-
-        if (isParsing) {
-             return (
-                <div className="flex items-center justify-center h-full text-center">
-                    <div>
-                        <Loader2 className="mx-auto h-12 w-12 text-muted-foreground animate-spin" />
-                        <h3 className="mt-2 text-sm font-semibold text-foreground">Parsing PDF...</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">Please wait while we process your document.</p>
-                    </div>
-                </div>
-            );
-        }
-
-        if (allUniqueTerms.length === 0) {
-            return <pre className="whitespace-pre-wrap font-sans text-sm">{documentText}</pre>;
-        }
-
-        const regex = new RegExp(`(${allUniqueTerms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
-        const parts = documentText.split(regex);
-
-        return (
-            <pre className="whitespace-pre-wrap font-sans text-sm">
-                {parts.map((part, index) => {
-                    const matchedTerm = allUniqueTerms.find(t => t.toLowerCase() === part.toLowerCase());
-                    if (matchedTerm) {
-                        const isRedacted = redactionTerms.some(rt => rt.toLowerCase() === part.toLowerCase());
-                        const className = cn(
-                            'rounded px-0.5 py-0.5 cursor-pointer',
-                            isRedacted ? 'bg-primary/30 line-through' : 'bg-accent/30 hover:bg-accent/50'
-                        );
-                        return <mark key={index} className={className} onClick={() => toggleRedactionStatus(part)}>{part}</mark>;
-                    }
-                    return <span key={index}>{part}</span>;
-                })}
-            </pre>
-        );
-    }, [documentText, redactionTerms, allUniqueTerms, isParsing, toggleRedactionStatus]);
-
+            )}
+            {pdfDocument && (
+                 <div ref={interactionRef} className="relative w-full h-full cursor-crosshair" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+                    <canvas ref={canvasRef} />
+                    {isDrawing && currentDrawing && (
+                        <div className="absolute border-2 border-dashed border-primary bg-primary/20 pointer-events-none"
+                            style={{
+                                left: currentDrawing.x,
+                                top: currentDrawing.y,
+                                width: currentDrawing.width,
+                                height: currentDrawing.height
+                            }}
+                        />
+                    )}
+                 </div>
+            )}
+        </>
+    );
 
     return (
         <div className="grid gap-6 lg:grid-cols-3">
             <Card className="lg:col-span-2">
                 <CardHeader>
                     <CardTitle>Document Viewer</CardTitle>
-                    <CardDescription>Select text to redact or use Smart Suggestions. Formatting will be preserved on download.</CardDescription>
+                    <CardDescription>Click and drag on the document to draw redaction boxes.</CardDescription>
                 </CardHeader>
                 <CardContent 
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
-                    className={cn("transition-colors", isDraggingOver && !documentText && "bg-primary/10")}
+                    className={cn("transition-colors relative", isDraggingOver && !pdfDocument && "bg-primary/10")}
                 >
-                    <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 p-4" onMouseUp={handleSelection} onClick={handleSelection} onDoubleClick={handleDoubleClick}>
-                        {highlightedDocument}
+                    <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 flex items-center justify-center">
+                        {documentViewer}
                     </ScrollArea>
                 </CardContent>
+                {pdfDocument && (
+                    <CardFooter className="justify-between items-center">
+                        <div className="flex items-center gap-2">
+                            <Button variant="outline" size="icon" onClick={() => setCurrentPageNumber(p => Math.max(1, p - 1))} disabled={currentPageNumber <= 1}>
+                                <ChevronLeft className="h-4 w-4" />
+                            </Button>
+                            <span className="text-sm text-muted-foreground">Page {currentPageNumber} of {totalPages}</span>
+                            <Button variant="outline" size="icon" onClick={() => setCurrentPageNumber(p => Math.min(totalPages, p + 1))} disabled={currentPageNumber >= totalPages}>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                        </div>
+                        <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0}>
+                            <Eraser className="mr-2 h-4 w-4"/> Clear All Redactions
+                        </Button>
+                    </CardFooter>
+                )}
             </Card>
 
             <div className="lg:col-span-1 flex flex-col gap-6">
                 <Card>
                     <CardHeader><CardTitle>Controls</CardTitle></CardHeader>
                     <CardContent className="flex flex-col gap-4">
-                        <Button onClick={handleSuggest} disabled={!documentText || isSuggesting}>
-                            {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                            Suggest
-                        </Button>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <Button className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
+                                <Button className="w-full" disabled={!originalPdf || redactions.length === 0 || !!isDownloading}>
                                     {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
                                     Download PDF
                                 </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width]">
-                                <DropdownMenuItem onClick={() => handleDownloadRecoverable()} disabled={!!isDownloading}>
+                                <DropdownMenuItem onClick={handleDownloadRecoverable} disabled={!!isDownloading}>
                                     Recoverable
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleDownloadSecure()} disabled={!!isDownloading}>
+                                <DropdownMenuItem onClick={handleDownloadSecure} disabled={!!isDownloading}>
                                     Secure (Flattened)
                                 </DropdownMenuItem>
                             </DropdownMenuContent>
@@ -549,58 +402,9 @@ export function RedactionTool() {
                          <Button variant="destructive" className="w-full" onClick={handleReset}><Trash2 className="mr-2 h-4 w-4" /> Reset</Button>
                     </CardFooter>
                 </Card>
-
-                {selectedText && (
-                    <Card className="animate-in fade-in"><CardHeader><CardTitle>Manual Selection</CardTitle></CardHeader>
-                        <CardContent><p className="text-sm font-mono p-2 bg-muted rounded">"{selectedText}"</p></CardContent>
-                        <CardFooter className="gap-2">
-                            <Button className="w-full" onClick={() => {
-                                setSuggestedTerms(prev => [...new Set([...prev, selectedText])]);
-                                setRedactionTerms(prev => [...new Set([...prev, selectedText])]);
-                                setSelectedText('');
-                            }}>Add to Redaction List</Button>
-                            <Button variant="ghost" size="icon" onClick={() => setSelectedText('')}><X className="h-4 w-4"/></Button>
-                        </CardFooter>
-                    </Card>
-                )}
-                
-                {allUniqueTerms.length > 0 && (
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Identified Terms</CardTitle>
-                            <CardDescription>Click to toggle redaction. Struck-through terms will be redacted.</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <ScrollArea className="h-40">
-                                <div className="flex flex-wrap gap-2">
-                                    {allUniqueTerms.map((term, i) => {
-                                        const isRedacted = redactionTerms.some(rt => rt.toLowerCase() === term.toLowerCase());
-                                        return (
-                                            <Badge
-                                                key={i}
-                                                variant={isRedacted ? "default" : "outline"}
-                                                className={cn(
-                                                    "text-base font-normal cursor-pointer transition-all",
-                                                    isRedacted 
-                                                        ? "line-through decoration-2 hover:bg-primary/80" 
-                                                        : "hover:bg-accent/20"
-                                                )}
-                                                onClick={() => toggleRedactionStatus(term)}
-                                            >
-                                                {term}
-                                            </Badge>
-                                        );
-                                    })}
-                                </div>
-                            </ScrollArea>
-                        </CardContent>
-                         <CardFooter>
-                             <p className="text-sm text-muted-foreground">{redactionTerms.length} of {allUniqueTerms.length} terms will be redacted.</p>
-                        </CardFooter>
-                    </Card>
-                )}
-
             </div>
         </div>
     );
 }
+
+    
