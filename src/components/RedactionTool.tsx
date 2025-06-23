@@ -262,10 +262,12 @@ export function RedactionTool() {
                 buffer += currentItem.str;
                 matchedItems.push(currentItem);
 
-                if (buffer.toLowerCase() === termToSearch) {
-                    results.push(matchedItems);
-                    i = j; 
-                    break;
+                if (buffer.toLowerCase().replace(/ /g, '') === termToSearch.replace(/ /g, '')) {
+                     if (buffer.toLowerCase() === termToSearch) {
+                        results.push(matchedItems);
+                        i = j; 
+                        break;
+                    }
                 }
                 
                 if (buffer.length > term.length + 10) break;
@@ -300,12 +302,8 @@ export function RedactionTool() {
 
                             minX = Math.min(minX, x);
                             maxX = Math.max(maxX, x + w);
-                            
-                            const itemTop = y - (h * 0.75);
-                            const itemBottom = y + (h * 0.15);
-
-                            topY = Math.min(topY, itemTop);
-                            bottomY = Math.max(bottomY, itemBottom);
+                            topY = Math.min(topY, y);
+                            bottomY = Math.max(bottomY, y + h);
                         });
 
                         const boxX = minX;
@@ -380,12 +378,8 @@ export function RedactionTool() {
                             
                             minX = Math.min(minX, x);
                             maxX = Math.max(maxX, x + w);
-                            
-                            const itemTop = y - (h * 0.75);
-                            const itemBottom = y + (h * 0.15);
-
-                            topY = Math.min(topY, itemTop);
-                            bottomY = Math.max(bottomY, itemBottom);
+                            topY = Math.min(topY, y);
+                            bottomY = Math.max(bottomY, y + h);
                         });
     
                         const boxX = minX;
