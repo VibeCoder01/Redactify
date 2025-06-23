@@ -62,11 +62,16 @@ export function RedactionTool() {
 
         const reader = new FileReader();
         reader.onload = async (e) => {
-            const buffer = e.target?.result;
+            const buffer = e.target?.result as ArrayBuffer;
             if (buffer) {
                 try {
-                    setOriginalPdf(buffer as ArrayBuffer);
-                    const pdf = await pdfjsLib.getDocument({ data: buffer as ArrayBuffer }).promise;
+                    // Store the original buffer in state. This will be used for redaction.
+                    setOriginalPdf(buffer);
+                    
+                    // Create a copy of the buffer for pdf.js to parse.
+                    // This prevents pdf.js from detaching the buffer, which would make it unusable for pdf-lib later.
+                    const bufferForParsing = buffer.slice(0);
+                    const pdf = await pdfjsLib.getDocument({ data: bufferForParsing }).promise;
                     let fullText = "";
                     const items: PdfTextItem[] = [];
 
