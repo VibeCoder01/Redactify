@@ -2,6 +2,7 @@
 
 import React, { useState, useTransition, useMemo, useRef } from "react";
 import * as pdfjsLib from "pdfjs-dist";
+import { jsPDF } from "jspdf";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ export function RedactionTool() {
     const [redactionTerms, setRedactionTerms] = useState<string[]>([]);
     const [suggestedTerms, setSuggestedTerms] = useState<string[]>([]);
     const [isRedacted, setIsRedacted] = useState(false);
+    const [redactedText, setRedactedText] = useState("");
     const [isPending, startTransition] = useTransition();
     const [isParsing, setIsParsing] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -45,12 +47,7 @@ export function RedactionTool() {
         }
 
         setIsParsing(true);
-        // Reset state for new document
-        setDocumentText("");
-        setSelectedText("");
-        setRedactionTerms([]);
-        setSuggestedTerms([]);
-        setIsRedacted(false);
+        handleReset();
 
         const reader = new FileReader();
         reader.onload = async (e) => {
@@ -141,6 +138,14 @@ export function RedactionTool() {
     }
 
     const handleApplyRedaction = () => {
+        const uniqueTerms = [...new Set(redactionTerms)];
+        let finalRedactedText = documentText;
+        if (uniqueTerms.length > 0) {
+            const regex = new RegExp(uniqueTerms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+            finalRedactedText = documentText.replace(regex, match => '█'.repeat(match.length));
+        }
+        setRedactedText(finalRedactedText);
+        
         setIsRedacted(true);
         setSuggestedTerms([]);
         setSelectedText('');
@@ -157,9 +162,44 @@ export function RedactionTool() {
         setRedactionTerms([]);
         setSuggestedTerms([]);
         setIsRedacted(false);
+        setRedactedText("");
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
         }
+    };
+
+    const handleDownload = () => {
+        if (!isRedacted || !redactedText) return;
+
+        const pdf = new jsPDF({
+            orientation: 'p',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        const margin = 15;
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const textWidth = pageWidth - margin * 2;
+        const lineHeight = 7;
+        
+        pdf.setFont("courier", "normal");
+        pdf.setFontSize(12);
+
+        const lines = pdf.splitTextToSize(redactedText, textWidth);
+
+        let cursorY = margin;
+
+        lines.forEach((line: string) => {
+            if (cursorY + lineHeight > pageHeight - margin) {
+                pdf.addPage();
+                cursorY = margin;
+            }
+            pdf.text(line, margin, cursorY);
+            cursorY += lineHeight;
+        });
+
+        pdf.save("redacted-document.pdf");
     };
 
     const highlightedDocument = useMemo(() => {
@@ -187,15 +227,8 @@ export function RedactionTool() {
             );
         }
 
-        let processedText = documentText;
-
         if (isRedacted) {
-            const uniqueTerms = [...new Set(redactionTerms)];
-            if (uniqueTerms.length > 0) {
-                const regex = new RegExp(uniqueTerms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
-                processedText = processedText.replace(regex, match => '█'.repeat(match.length));
-            }
-            return <pre className="whitespace-pre-wrap font-sans text-sm">{processedText}</pre>;
+            return <pre className="whitespace-pre-wrap font-sans text-sm">{redactedText}</pre>;
         }
 
         const allTerms = [
@@ -206,11 +239,11 @@ export function RedactionTool() {
         const uniqueAllTerms = [...new Map(allTerms.map(item => [item.term.toLowerCase(), item])).values()];
 
         if (uniqueAllTerms.length === 0) {
-            return <pre className="whitespace-pre-wrap font-sans text-sm">{processedText}</pre>;
+            return <pre className="whitespace-pre-wrap font-sans text-sm">{documentText}</pre>;
         }
 
         const regex = new RegExp(`(${uniqueAllTerms.map(item => item.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
-        const parts = processedText.split(regex);
+        const parts = documentText.split(regex);
 
         return (
             <pre className="whitespace-pre-wrap font-sans text-sm">
@@ -230,7 +263,7 @@ export function RedactionTool() {
                 })}
             </pre>
         );
-    }, [documentText, redactionTerms, suggestedTerms, isRedacted, isParsing]);
+    }, [documentText, redactionTerms, suggestedTerms, isRedacted, isParsing, redactedText]);
 
 
     return (
@@ -272,13 +305,9 @@ export function RedactionTool() {
                         <Button variant="destructive" onClick={handleReset}><Trash2 className="mr-2 h-4 w-4" /> Reset</Button>
                     </CardFooter>
                      <CardFooter>
-                        <TooltipProvider>
-                            <Tooltip><TooltipTrigger asChild>
-                                <Button variant="outline" className="w-full" disabled>
-                                    <Download className="mr-2 h-4 w-4" /> Download PDF
-                                </Button>
-                            </TooltipTrigger><TooltipContent><p>Download feature is for demonstration purposes.</p></TooltipContent></Tooltip>
-                        </TooltipProvider>
+                        <Button onClick={handleDownload} className="w-full" disabled={!isRedacted}>
+                            <Download className="mr-2 h-4 w-4" /> Download PDF
+                        </Button>
                     </CardFooter>
                 </Card>
 
