@@ -238,13 +238,14 @@ export function RedactionTool() {
                                 maxY = Math.max(maxY, ty + match.height);
                             });
 
-                            const padding = 2; // Add some padding to ensure full coverage
+                            const padding = 2; // Horizontal padding
+                            const textHeight = maxY - minY;
+                            const verticalPadding = textHeight * 0.25; // Add 25% padding top and bottom
 
-                            // Convert y-coordinate from pdf.js (top-left origin) to pdf-lib (bottom-left origin)
                             const boxWidth = (maxX - minX) + (padding * 2);
-                            const boxHeight = (maxY - minY) + (padding * 2);
+                            const boxHeight = textHeight + (verticalPadding * 2);
                             const boxX = minX - padding;
-                            const boxY = pageHeight - maxY - padding;
+                            const boxY = pageHeight - (maxY + verticalPadding);
 
 
                             page.drawRectangle({
