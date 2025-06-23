@@ -420,8 +420,10 @@ export function RedactionTool() {
                     className={cn("transition-colors relative p-0")}
                 >
                     <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20">
-                        <div className="grid min-h-full w-full place-items-center p-4">
-                            {documentViewer}
+                        <div className="flex h-full p-4">
+                            <div className="m-auto">
+                                {documentViewer}
+                            </div>
                         </div>
                     </ScrollArea>
                 </CardContent>
