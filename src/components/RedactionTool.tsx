@@ -233,42 +233,85 @@ export function RedactionTool() {
     
     const findMatchingTextItems = (term: string) => {
         const results: PdfTextItem[][] = [];
-        const termToSearch = term.toLowerCase().replace(/\s/g, '');
-        if (!termToSearch) return [];
+        if (!term || !pdfTextItems.length) return results;
+    
+        const normalizedTerm = term.toLowerCase().replace(/\s+/g, "");
     
         for (let i = 0; i < pdfTextItems.length; i++) {
-            let buffer = '';
+            let buffer = "";
             const potentialMatch: PdfTextItem[] = [];
     
             for (let j = i; j < pdfTextItems.length; j++) {
                 const currentItem = pdfTextItems[j];
-                const prevItem = j > i ? pdfTextItems[j-1] : null;
+                const prevItem = j > i ? pdfTextItems[j - 1] : null;
     
                 if (prevItem && currentItem.pageIndex !== prevItem.pageIndex) {
-                    break; // Don't span pages
+                    break; 
                 }
-                
-                const itemText = currentItem.str.toLowerCase();
-                buffer += itemText.replace(/\s/g, '');
+    
+                buffer += currentItem.str.toLowerCase().replace(/\s+/g, "");
                 potentialMatch.push(currentItem);
     
-                if (buffer.startsWith(termToSearch)) {
-                    if (buffer === termToSearch) {
-                        // Exact match found
-                        results.push(potentialMatch);
-                        i = j; // Continue search after this match
-                        break;
+                if (buffer.startsWith(normalizedTerm)) {
+                    if (buffer === normalizedTerm) {
+                        results.push([...potentialMatch]);
+                        i = j; 
+                        break; 
                     }
-                    // It's a prefix, continue accumulating
-                } else if (!termToSearch.startsWith(buffer)) {
-                    // This path is not going to lead to a match
-                    break;
+                } else if (!normalizedTerm.startsWith(buffer)) {
+                    break; 
                 }
             }
         }
         return results;
     };
     
+    const getRedactionAreasByPage = () => {
+        const redactionAreasByPage: { [pageIndex: number]: { x: number; y: number; width: number; height: number }[] } = {};
+        const margin = 1;
+
+        for (const term of redactionTerms) {
+            const termMatches = findMatchingTextItems(term);
+
+            for (const matchedItems of termMatches) {
+                if (matchedItems.length === 0) continue;
+
+                const pageIndex = matchedItems[0].pageIndex;
+                if (!redactionAreasByPage[pageIndex]) {
+                    redactionAreasByPage[pageIndex] = [];
+                }
+
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+                matchedItems.forEach(item => {
+                    const [scaleX, , , scaleY, x, y] = item.transform;
+                    // item.transform gives the baseline. Bounding box is relative to that.
+                    const itemHeight = item.height; // This is the scaled height
+                    const itemWidth = item.width;   // This is the scaled width
+
+                    const boxBottom = y - margin;
+                    const boxTop = y + itemHeight + margin;
+                    const boxLeft = x - margin;
+                    const boxRight = x + itemWidth + margin;
+
+                    minX = Math.min(minX, boxLeft);
+                    maxX = Math.max(maxX, boxRight);
+                    minY = Math.min(minY, boxBottom);
+                    maxY = Math.max(maxY, boxTop);
+                });
+                
+                redactionAreasByPage[pageIndex].push({
+                    x: minX,
+                    y: minY,
+                    width: maxX - minX,
+                    height: maxY - minY,
+                });
+            }
+        }
+        return redactionAreasByPage;
+    }
+
+
     const handleDownloadRecoverable = async () => {
         if (!originalPdf || redactionTerms.length === 0) return;
 
@@ -276,38 +319,19 @@ export function RedactionTool() {
         try {
             const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
             const pages = pdfDoc.getPages();
+            const redactionAreasByPage = getRedactionAreasByPage();
     
-            for (const term of redactionTerms) {
-                const termMatches = findMatchingTextItems(term);
-    
-                for (const matchedItems of termMatches) {
-                    if (matchedItems.length === 0) continue;
-
-                    const pageIndex = matchedItems[0].pageIndex;
-                    const page = pages[pageIndex];
-                    
-                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-                    matchedItems.forEach(item => {
-                        const x = item.transform[4];
-                        const y = item.transform[5];
-                        const width = item.width;
-                        const height = item.height;
-
-                        minX = Math.min(minX, x);
-                        maxX = Math.max(maxX, x + width);
-                        minY = Math.min(minY, y);
-                        maxY = Math.max(maxY, y + height);
-                    });
-
-                    page.drawRectangle({
-                        x: minX,
-                        y: minY,
-                        width: maxX - minX,
-                        height: maxY - minY,
+            for (const pageIndexStr in redactionAreasByPage) {
+                const pageIndex = parseInt(pageIndexStr, 10);
+                const page = pages[pageIndex];
+                const areas = redactionAreasByPage[pageIndex];
+                
+                areas.forEach(area => {
+                     page.drawRectangle({
+                        ...area,
                         color: rgb(0, 0, 0),
                     });
-                }
+                })
             }
 
             const pdfBytes = await pdfDoc.save();
@@ -344,40 +368,7 @@ export function RedactionTool() {
             const newPdfDoc = await PDFDocument.create();
             const pdfToRender = await pdfjsLib.getDocument({ data: originalPdf.slice(0) }).promise;
     
-            const redactionAreasByPage: { [pageIndex: number]: { x: number; y: number; width: number; height: number }[] } = {};
-    
-            for (const term of redactionTerms) {
-                const termMatches = findMatchingTextItems(term);
-    
-                for (const matchedItems of termMatches) {
-                    if (matchedItems.length > 0) {
-                        const pageIndex = matchedItems[0].pageIndex;
-                        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-                        matchedItems.forEach(item => {
-                            const x = item.transform[4];
-                            const y = item.transform[5];
-                            const width = item.width;
-                            const height = item.height;
-                            
-                            minX = Math.min(minX, x);
-                            maxX = Math.max(maxX, x + width);
-                            minY = Math.min(minY, y);
-                            maxY = Math.max(maxY, y + height);
-                        });
-    
-                        const boxX = minX;
-                        const boxY = minY;
-                        const boxWidth = maxX - minX;
-                        const boxHeight = maxY - minY;
-    
-                        if (!redactionAreasByPage[pageIndex]) {
-                            redactionAreasByPage[pageIndex] = [];
-                        }
-                        redactionAreasByPage[pageIndex].push({ x: boxX, y: boxY, width: boxWidth, height: boxHeight });
-                    }
-                }
-            }
+            const redactionAreasByPage = getRedactionAreasByPage();
     
             for (let i = 0; i < pdfToRender.numPages; i++) {
                 const page = await pdfToRender.getPage(i + 1);
