@@ -13,6 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { FileUp, Sparkles, Download, Loader2, X, Check, Trash2 } from "lucide-react";
 import { suggestRedactionTerms } from "@/ai/flows/suggest-redaction-terms";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 if (typeof window !== 'undefined') {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -35,14 +36,14 @@ export function RedactionTool() {
     const [isSuggesting, startSuggestionTransition] = useTransition();
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isParsing, setIsParsing] = useState(false);
+    const [isDraggingOver, setIsDraggingOver] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
 
     const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
     const [pdfTextItems, setPdfTextItems] = useState<PdfTextItem[]>([]);
 
-    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
+    const handleFileUpload = async (file: File | null | undefined) => {
         if (!file) {
             return;
         }
@@ -53,14 +54,18 @@ export function RedactionTool() {
                 title: 'Invalid File Type',
                 description: 'Please upload a PDF file.',
             });
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
             return;
         }
 
+        // Reset state before loading new file
+        setDocumentText("");
+        setSelectedText("");
+        setRedactionTerms([]);
+        setSuggestedTerms([]);
+        setOriginalPdf(null);
+        setPdfTextItems([]);
+        setIsDownloading(null);
         setIsParsing(true);
-        handleReset();
 
         const reader = new FileReader();
         reader.onload = async (e) => {
@@ -120,6 +125,36 @@ export function RedactionTool() {
             setIsParsing(false);
         };
         reader.readAsArrayBuffer(file);
+    };
+
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        handleFileUpload(event.target.files?.[0]);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = "";
+        }
+    };
+
+    const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingOver(false);
+        if (documentText) return;
+
+        handleFileUpload(e.dataTransfer.files?.[0]);
+    };
+
+    const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!documentText) {
+            setIsDraggingOver(true);
+        }
+    };
+
+    const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingOver(false);
     };
 
     const handleSelection = () => {
@@ -443,11 +478,14 @@ export function RedactionTool() {
     const highlightedDocument = useMemo(() => {
         if (!documentText && !isParsing) {
             return (
-                <div className="flex items-center justify-center h-full text-center">
+                <div 
+                    className="flex items-center justify-center h-full text-center cursor-pointer"
+                    onClick={() => fileInputRef.current?.click()}
+                >
                     <div>
                         <FileUp className="mx-auto h-12 w-12 text-muted-foreground" />
-                        <h3 className="mt-2 text-sm font-semibold text-foreground">No Document</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">Upload a PDF to get started.</p>
+                        <h3 className="mt-2 text-sm font-semibold text-foreground">Upload a Document</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">Drag & drop or click to upload a PDF.</p>
                     </div>
                 </div>
             );
@@ -507,7 +545,12 @@ export function RedactionTool() {
                     <CardTitle>Document Viewer</CardTitle>
                     <CardDescription>Select text to redact or use Smart Suggestions. Formatting will be preserved on download.</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent 
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    className={cn("transition-colors", isDraggingOver && !documentText && "bg-primary/10")}
+                >
                     <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 p-4" onMouseUp={handleSelection} onClick={handleSelection} onDoubleClick={handleDoubleClick}>
                         {highlightedDocument}
                     </ScrollArea>
@@ -518,16 +561,10 @@ export function RedactionTool() {
                 <Card>
                     <CardHeader><CardTitle>Controls</CardTitle></CardHeader>
                     <CardContent className="flex flex-col gap-4">
-                        <div className="grid grid-cols-2 gap-2">
-                            <Button onClick={() => fileInputRef.current?.click()} disabled={isParsing || !!documentText}>
-                                {isParsing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
-                                {isParsing ? "Parsing..." : "Upload"}
-                            </Button>
-                            <Button onClick={handleSuggest} disabled={!documentText || isSuggesting}>
-                                {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                                Suggest
-                            </Button>
-                        </div>
+                        <Button onClick={handleSuggest} disabled={!documentText || isSuggesting}>
+                            {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                            Suggest
+                        </Button>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
@@ -608,3 +645,5 @@ export function RedactionTool() {
         </div>
     );
 }
+
+    
