@@ -41,7 +41,6 @@ export function RedactionTool() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
-    const scrollAreaRef = useRef<HTMLDivElement>(null);
 
     const { toast } = useToast();
     
@@ -149,8 +148,8 @@ export function RedactionTool() {
     };
 
     const getMousePos = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!canvasRef.current) return {x: 0, y: 0};
-        const rect = canvasRef.current.getBoundingClientRect();
+        if (!interactionRef.current) return {x: 0, y: 0};
+        const rect = interactionRef.current.getBoundingClientRect();
         return {
           x: e.clientX - rect.left,
           y: e.clientY - rect.top
@@ -428,8 +427,8 @@ export function RedactionTool() {
                     className={cn("transition-colors relative p-0")}
                 >
                     <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20">
-                        <div className="flex h-full items-center">
-                           <div className="mx-auto min-w-max">
+                        <div className="relative w-full h-full">
+                           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
                                 {documentViewer}
                             </div>
                         </div>
