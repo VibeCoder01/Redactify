@@ -41,6 +41,8 @@ export function RedactionTool() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
+    const scrollAreaRef = useRef<HTMLDivElement>(null);
+
     const { toast } = useToast();
     
     const totalPages = pdfDocument?.numPages ?? 0;
@@ -157,12 +159,16 @@ export function RedactionTool() {
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!canvasRef.current || !pdfDocument) return;
+        e.preventDefault();
+        e.stopPropagation();
         setIsDrawing(true);
         setDrawStartPoint(getMousePos(e));
     };
     
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!isDrawing || !drawStartPoint || !canvasRef.current) return;
+        e.preventDefault();
+        e.stopPropagation();
         const currentPos = getMousePos(e);
     
         const x = Math.min(drawStartPoint.x, currentPos.x);
@@ -172,8 +178,10 @@ export function RedactionTool() {
         setCurrentDrawing({ x, y, width, height });
     };
 
-    const handleMouseUp = async () => {
+    const handleMouseUp = async (e: React.MouseEvent<HTMLDivElement>) => {
         if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current) return;
+        e.preventDefault();
+        e.stopPropagation();
         
         const page = await pdfDocument.getPage(currentPageNumber);
         
@@ -420,8 +428,8 @@ export function RedactionTool() {
                     className={cn("transition-colors relative p-0")}
                 >
                     <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20">
-                        <div className="flex h-full items-center p-4">
-                            <div className="mx-auto">
+                        <div className="flex h-full items-center">
+                           <div className="mx-auto min-w-max">
                                 {documentViewer}
                             </div>
                         </div>
