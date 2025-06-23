@@ -180,52 +180,55 @@ export function RedactionTool() {
 
     const handleDownload = async () => {
         if (!originalPdf || redactionTerms.length === 0) return;
-
+    
         setIsDownloading(true);
         try {
-            const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
-            const pages = pdfDoc.getPages();
+            // Create a new PDF to hold the flattened, secure pages
+            const newPdfDoc = await PDFDocument.create();
+            
+            // Load the original PDF with pdf-js to render it
+            const pdfToRender = await pdfjsLib.getDocument({ data: originalPdf.slice(0) }).promise;
+    
+            // We need to load the original PDF with pdf-lib as well to get accurate page dimensions
+            const originalPdfDocForCoords = await PDFDocument.load(originalPdf.slice(0));
+            const originalPages = originalPdfDocForCoords.getPages();
+    
+            const redactionAreasByPage: { [pageIndex: number]: { x: number; y: number; width: number; height: number }[] } = {};
             const allTerms = [...new Set(redactionTerms)];
-
-            // Create a searchable text string without spaces, and a map to get back to original items.
-            // This allows for matching terms that span across multiple text chunks from the PDF.
+    
+            // This logic finds all text occurrences and calculates their bounding boxes for redaction
             const searchableTextChars: string[] = [];
             const charToItemMap: number[] = [];
             pdfTextItems.forEach((item, index) => {
                 const text = item.str;
                 for (let i = 0; i < text.length; i++) {
                     const char = text[i];
-                    // Build a string of only non-whitespace characters for searching
                     if (char.trim() !== '') {
                         searchableTextChars.push(char);
-                        // Map each character in the searchable string back to its original item
                         charToItemMap.push(index);
                     }
                 }
             });
             const searchableText = searchableTextChars.join('').toLowerCase();
-
+    
             for (const term of allTerms) {
                 const termToSearch = term.replace(/\s/g, '').toLowerCase();
                 if (termToSearch.length === 0) continue;
-
+    
                 let startIndex = 0;
                 let foundIndex;
-
-                // Loop to find all occurrences of the term
+    
                 while ((foundIndex = searchableText.indexOf(termToSearch, startIndex)) > -1) {
                     const firstItemIdx = charToItemMap[foundIndex];
                     const lastItemIdx = charToItemMap[foundIndex + termToSearch.length - 1];
                     const matchedItems = pdfTextItems.slice(firstItemIdx, lastItemIdx + 1);
-
+    
                     if (matchedItems.length > 0) {
                         const pageIndex = matchedItems[0].pageIndex;
-                        // Ensure all parts of the match are on the same page before drawing
                         if (matchedItems.every(item => item.pageIndex === pageIndex)) {
-                            const page = pages[pageIndex];
-                            
+                            const page = originalPages[pageIndex];
                             let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
+    
                             matchedItems.forEach(item => {
                                 const [x, y, w, h] = [item.transform[4], item.transform[5], item.width, item.height];
                                 minX = Math.min(minX, x);
@@ -233,53 +236,86 @@ export function RedactionTool() {
                                 minY = Math.min(minY, y);
                                 maxY = Math.max(maxY, y + h);
                             });
-
+    
                             const textBlockHeight = maxY - minY;
-                            
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = minY - (textBlockHeight * 0.35); // Shift down from baseline
-                            const boxHeight = textBlockHeight * 1.6; // Make box taller than text block
-
-                            page.drawRectangle({
-                                x: boxX,
-                                y: boxY,
-                                width: boxWidth,
-                                height: boxHeight,
-                                color: rgb(0, 0, 0),
-                            });
+                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.25);
+                            const boxHeight = textBlockHeight * 1.6;
+    
+                            if (!redactionAreasByPage[pageIndex]) {
+                                redactionAreasByPage[pageIndex] = [];
+                            }
+                            redactionAreasByPage[pageIndex].push({ x: boxX, y: boxY, width: boxWidth, height: boxHeight });
                         }
                     }
-                    // Continue searching from the character after the start of the last match
                     startIndex = foundIndex + 1;
                 }
             }
-            
-            const pdfBytes = await pdfDoc.save();
+    
+            // Render each page to a canvas, draw redactions, and add as an image to the new PDF
+            for (let i = 0; i < pdfToRender.numPages; i++) {
+                const page = await pdfToRender.getPage(i + 1);
+                const viewport = page.getViewport({ scale: 2.0 }); // Use a higher scale for better quality
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+    
+                if (!context) continue;
+    
+                await page.render({ canvasContext: context, viewport }).promise;
+    
+                const redactionAreas = redactionAreasByPage[i] || [];
+                context.fillStyle = 'black';
+                redactionAreas.forEach(area => {
+                    context.fillRect(area.x * viewport.scale, area.y * viewport.scale, area.width * viewport.scale, area.height * viewport.scale);
+                });
+    
+                const imageBytes = await new Promise<Uint8Array>((resolve) => {
+                    canvas.toBlob(blob => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+                        reader.readAsArrayBuffer(blob!);
+                    }, 'image/png');
+                });
+    
+                const pngImage = await newPdfDoc.embedPng(imageBytes);
+                const newPage = newPdfDoc.addPage([viewport.width, viewport.height]);
+                newPage.drawImage(pngImage, {
+                    x: 0,
+                    y: 0,
+                    width: viewport.width,
+                    height: viewport.height,
+                });
+            }
+    
+            const pdfBytes = await newPdfDoc.save();
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = 'redacted-document.pdf';
+            link.download = 'redacted-document-secure.pdf';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(link.href);
-            
+    
             toast({
                 title: "Download Ready",
-                description: "Your redacted PDF has been downloaded.",
+                description: "Your securely redacted PDF has been downloaded.",
             });
         } catch (error) {
-            console.error("Failed to create redacted PDF:", error);
+            console.error("Failed to create secure redacted PDF:", error);
             toast({
                 variant: 'destructive',
                 title: 'Download Error',
-                description: 'Could not generate the redacted PDF.',
+                description: 'Could not generate the secure redacted PDF.',
             });
         } finally {
             setIsDownloading(false);
         }
     };
+    
 
     const highlightedDocument = useMemo(() => {
         if (!documentText && !isParsing) {
