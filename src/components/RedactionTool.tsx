@@ -2,7 +2,7 @@
 
 import React, { useState, useTransition, useMemo, useRef } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { jsPDF } from "jspdf";
+import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,17 +16,28 @@ if (typeof window !== 'undefined') {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 }
 
+interface PdfTextItem {
+    str: string;
+    dir: string;
+    transform: number[];
+    width: number;
+    height: number;
+    pageIndex: number;
+}
+
 export function RedactionTool() {
     const [documentText, setDocumentText] = useState("");
     const [selectedText, setSelectedText] = useState("");
     const [redactionTerms, setRedactionTerms] = useState<string[]>([]);
     const [suggestedTerms, setSuggestedTerms] = useState<string[]>([]);
-    const [isRedacted, setIsRedacted] = useState(false);
-    const [redactedText, setRedactedText] = useState("");
-    const [isPending, startTransition] = useTransition();
+    const [isSuggesting, startSuggestionTransition] = useTransition();
+    const [isDownloading, setIsDownloading] = useState(false);
     const [isParsing, setIsParsing] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
+
+    const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
+    const [pdfTextItems, setPdfTextItems] = useState<PdfTextItem[]>([]);
 
     const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -54,15 +65,32 @@ export function RedactionTool() {
             const buffer = e.target?.result;
             if (buffer) {
                 try {
+                    setOriginalPdf(buffer as ArrayBuffer);
                     const pdf = await pdfjsLib.getDocument({ data: buffer as ArrayBuffer }).promise;
                     let fullText = "";
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
+                    const items: PdfTextItem[] = [];
+
+                    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                        const page = await pdf.getPage(pageNum);
                         const textContent = await page.getTextContent();
-                        const pageText = textContent.items.map(item => 'str' in item ? item.str : '').join(" ");
-                        fullText += pageText + "\n\n";
+                        
+                        fullText += textContent.items.map(item => 'str' in item ? item.str : '').join(" ") + "\n\n";
+                        
+                        textContent.items.forEach(item => {
+                            if ('str' in item && item.str.trim().length > 0) {
+                                items.push({
+                                    str: item.str,
+                                    dir: item.dir,
+                                    transform: item.transform,
+                                    width: item.width,
+                                    height: item.height,
+                                    pageIndex: pageNum - 1,
+                                });
+                            }
+                        });
                     }
                     setDocumentText(fullText);
+                    setPdfTextItems(items);
                     toast({
                         title: 'PDF Loaded',
                         description: `"${file.name}" has been loaded successfully.`,
@@ -92,7 +120,6 @@ export function RedactionTool() {
     };
 
     const handleSelection = () => {
-        if (isRedacted) return;
         const text = window.getSelection()?.toString().trim();
         if (text && !redactionTerms.includes(text) && !suggestedTerms.includes(text)) {
             setSelectedText(text);
@@ -100,7 +127,7 @@ export function RedactionTool() {
     };
     
     const handleSuggest = () => {
-        startTransition(async () => {
+        startSuggestionTransition(async () => {
             try {
                 const result = await suggestRedactionTerms({ text: documentText });
                 if (result && result.terms) {
@@ -137,69 +164,98 @@ export function RedactionTool() {
         setRedactionTerms(prev => prev.filter(t => t !== term));
     }
 
-    const handleApplyRedaction = () => {
-        const uniqueTerms = [...new Set(redactionTerms)];
-        let finalRedactedText = documentText;
-        if (uniqueTerms.length > 0) {
-            const regex = new RegExp(uniqueTerms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
-            finalRedactedText = documentText.replace(regex, match => '█'.repeat(match.length));
-        }
-        setRedactedText(finalRedactedText);
-        
-        setIsRedacted(true);
-        setSuggestedTerms([]);
-        setSelectedText('');
-        toast({
-            title: "Redactions Applied",
-            description: "The document has been redacted.",
-            variant: 'default'
-        });
-    };
-
     const handleReset = () => {
         setDocumentText("");
         setSelectedText("");
         setRedactionTerms([]);
         setSuggestedTerms([]);
-        setIsRedacted(false);
-        setRedactedText("");
+        setOriginalPdf(null);
+        setPdfTextItems([]);
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
         }
     };
 
-    const handleDownload = () => {
-        if (!isRedacted || !redactedText) return;
+    const handleDownload = async () => {
+        if (!originalPdf || redactionTerms.length === 0) return;
 
-        const pdf = new jsPDF({
-            orientation: 'p',
-            unit: 'mm',
-            format: 'a4'
-        });
+        setIsDownloading(true);
+        try {
+            const pdfDoc = await PDFDocument.load(originalPdf);
+            const pages = pdfDoc.getPages();
+            const allTerms = [...new Set(redactionTerms)];
 
-        const margin = 15;
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
-        const textWidth = pageWidth - margin * 2;
-        const lineHeight = 7;
-        
-        pdf.setFont("courier", "normal");
-        pdf.setFontSize(12);
+            const searchableText = pdfTextItems.map(i => i.str).join('');
+            const charToItemMap: number[] = [];
+            pdfTextItems.forEach((item, index) => {
+                for (let k = 0; k < item.str.length; k++) charToItemMap.push(index);
+            });
 
-        const lines = pdf.splitTextToSize(redactedText, textWidth);
+            for (const term of allTerms) {
+                const termToSearch = term.replace(/\s/g, '').toLowerCase();
+                if (termToSearch.length === 0) continue;
 
-        let cursorY = margin;
+                let startIndex = 0;
+                let foundIndex;
+                while ((foundIndex = searchableText.toLowerCase().indexOf(termToSearch, startIndex)) > -1) {
+                    const firstItemIdx = charToItemMap[foundIndex];
+                    const lastItemIdx = charToItemMap[foundIndex + termToSearch.length - 1];
+                    const matchedItems = pdfTextItems.slice(firstItemIdx, lastItemIdx + 1);
 
-        lines.forEach((line: string) => {
-            if (cursorY + lineHeight > pageHeight - margin) {
-                pdf.addPage();
-                cursorY = margin;
+                    if (matchedItems.length > 0) {
+                        const pageIndex = matchedItems[0].pageIndex;
+                        if (matchedItems.every(item => item.pageIndex === pageIndex)) {
+                            const page = pages[pageIndex];
+                            const { height: pageHeight } = page.getSize();
+                            
+                            let minX = Infinity, maxX = -Infinity;
+                            matchedItems.forEach(match => {
+                                const tx = match.transform[4];
+                                minX = Math.min(minX, tx);
+                                maxX = Math.max(maxX, tx + match.width);
+                            });
+
+                            const boxHeight = Math.max(...matchedItems.map(m => m.height)) * 1.2;
+                            const boxBottomY = Math.max(...matchedItems.map(m => m.transform[5]));
+                            const y = pageHeight - boxBottomY;
+
+                            page.drawRectangle({
+                                x: minX,
+                                y: y,
+                                width: maxX - minX,
+                                height: boxHeight,
+                                color: rgb(0, 0, 0),
+                            });
+                        }
+                    }
+                    startIndex = foundIndex + termToSearch.length;
+                }
             }
-            pdf.text(line, margin, cursorY);
-            cursorY += lineHeight;
-        });
 
-        pdf.save("redacted-document.pdf");
+            const pdfBytes = await pdfDoc.save();
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'redacted-document.pdf';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+            
+            toast({
+                title: "Download Ready",
+                description: "Your redacted PDF has been downloaded.",
+            });
+        } catch (error) {
+            console.error("Failed to create redacted PDF:", error);
+            toast({
+                variant: 'destructive',
+                title: 'Download Error',
+                description: 'Could not generate the redacted PDF.',
+            });
+        } finally {
+            setIsDownloading(false);
+        }
     };
 
     const highlightedDocument = useMemo(() => {
@@ -225,10 +281,6 @@ export function RedactionTool() {
                     </div>
                 </div>
             );
-        }
-
-        if (isRedacted) {
-            return <pre className="whitespace-pre-wrap font-sans text-sm">{redactedText}</pre>;
         }
 
         const allTerms = [
@@ -263,7 +315,7 @@ export function RedactionTool() {
                 })}
             </pre>
         );
-    }, [documentText, redactionTerms, suggestedTerms, isRedacted, isParsing, redactedText]);
+    }, [documentText, redactionTerms, suggestedTerms, isParsing]);
 
 
     return (
@@ -271,7 +323,7 @@ export function RedactionTool() {
             <Card className="lg:col-span-2">
                 <CardHeader>
                     <CardTitle>Document Viewer</CardTitle>
-                    <CardDescription>{isRedacted ? "Redactions have been applied." : "Select text to redact or use Smart Suggestions."}</CardDescription>
+                    <CardDescription>Select text to redact or use Smart Suggestions. Formatting will be preserved on download.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 p-4" onMouseUp={handleSelection}>
@@ -293,32 +345,30 @@ export function RedactionTool() {
                         />
                         <Button onClick={() => fileInputRef.current?.click()} disabled={isParsing || !!documentText}>
                             {isParsing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
-                            {isParsing ? "Parsing PDF..." : "Upload PDF"}
+                            {isParsing ? "Parsing..." : "Upload PDF"}
                         </Button>
-                        <Button onClick={handleSuggest} disabled={!documentText || isPending || isRedacted}>
-                            {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                        <Button onClick={handleSuggest} disabled={!documentText || isSuggesting}>
+                            {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
                             Smart Suggestion
                         </Button>
-                    </CardContent>
-                    <CardFooter className="grid grid-cols-2 gap-2">
-                        <Button onClick={handleApplyRedaction} disabled={redactionTerms.length === 0 || isRedacted} className="bg-accent hover:bg-accent/90">Apply Redaction</Button>
-                        <Button variant="destructive" onClick={handleReset}><Trash2 className="mr-2 h-4 w-4" /> Reset</Button>
-                    </CardFooter>
-                     <CardFooter>
-                        <Button onClick={handleDownload} className="w-full" disabled={!isRedacted}>
-                            <Download className="mr-2 h-4 w-4" /> Download PDF
+                         <Button onClick={handleDownload} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || isDownloading}>
+                            {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                            Download Redacted PDF
                         </Button>
+                    </CardContent>
+                    <CardFooter>
+                         <Button variant="destructive" className="w-full" onClick={handleReset}><Trash2 className="mr-2 h-4 w-4" /> Reset</Button>
                     </CardFooter>
                 </Card>
 
-                {selectedText && !isRedacted && (
+                {selectedText && (
                     <Card className="animate-in fade-in"><CardHeader><CardTitle>Manual Selection</CardTitle></CardHeader>
                         <CardContent><p className="text-sm font-mono p-2 bg-muted rounded">"{selectedText}"</p></CardContent>
                         <CardFooter className="gap-2"><Button className="w-full" onClick={() => { setRedactionTerms(prev => [...prev, selectedText]); setSelectedText(''); }}>Add to List</Button><Button variant="ghost" size="icon" onClick={() => setSelectedText('')}><X className="h-4 w-4"/></Button></CardFooter>
                     </Card>
                 )}
                 
-                {(suggestedTerms.length > 0 && !isRedacted) && (
+                {suggestedTerms.length > 0 && (
                     <Card><CardHeader><CardTitle>Suggested Terms</CardTitle></CardHeader>
                         <CardContent>
                             <ScrollArea className="h-32"><div className="space-y-2">
@@ -336,7 +386,7 @@ export function RedactionTool() {
                     </Card>
                 )}
 
-                {(redactionTerms.length > 0 && !isRedacted) && (
+                {redactionTerms.length > 0 && (
                     <Card><CardHeader><CardTitle>Redaction List</CardTitle><CardDescription>{redactionTerms.length} term(s) will be redacted.</CardDescription></CardHeader>
                         <CardContent>
                             <ScrollArea className="h-32"><div className="flex flex-wrap gap-2">
