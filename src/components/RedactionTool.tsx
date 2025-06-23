@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { FileUp, Sparkles, Download, Loader2, X, Check, Trash2 } from "lucide-react";
 import { suggestRedactionTerms } from "@/ai/flows/suggest-redaction-terms";
 import { useToast } from "@/hooks/use-toast";
@@ -123,8 +124,10 @@ export function RedactionTool() {
 
     const handleSelection = () => {
         const text = window.getSelection()?.toString().trim();
-        if (text && !redactionTerms.includes(text) && !suggestedTerms.includes(text)) {
+        if (text && !redactionTerms.includes(text)) {
             setSelectedText(text);
+        } else if (!text) {
+            setSelectedText("");
         }
     };
     
@@ -286,7 +289,7 @@ export function RedactionTool() {
         }
     };
 
-    const handleDownloadSecure = async (type: 'flattened' | 'image') => {
+    const handleDownloadSecure = async (type: 'flattened') => {
         if (!originalPdf || redactionTerms.length === 0) return;
     
         setIsDownloading(type);
@@ -485,7 +488,7 @@ export function RedactionTool() {
                     <CardDescription>Select text to redact or use Smart Suggestions. Formatting will be preserved on download.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 p-4" onMouseUp={handleSelection}>
+                    <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 p-4" onMouseUp={handleSelection} onClick={handleSelection}>
                         {highlightedDocument}
                     </ScrollArea>
                 </CardContent>
@@ -494,30 +497,41 @@ export function RedactionTool() {
             <div className="lg:col-span-1 flex flex-col gap-6">
                 <Card>
                     <CardHeader><CardTitle>Controls</CardTitle></CardHeader>
-                    <CardContent className="grid gap-2">
-                        <input
+                    <CardContent className="flex flex-col gap-4">
+                        <div className="grid grid-cols-2 gap-2">
+                            <Button onClick={() => fileInputRef.current?.click()} disabled={isParsing || !!documentText}>
+                                {isParsing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
+                                {isParsing ? "Parsing..." : "Upload"}
+                            </Button>
+                            <Button onClick={handleSuggest} disabled={!documentText || isSuggesting}>
+                                {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                                Suggest
+                            </Button>
+                        </div>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
+                                    {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                                    Download PDF
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width]">
+                                <DropdownMenuItem onClick={() => handleDownloadRecoverable()} disabled={!!isDownloading}>
+                                    Recoverable
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleDownloadSecure('flattened')} disabled={!!isDownloading}>
+                                    Secure (Flattened)
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+
+                         <input
                             type="file"
                             ref={fileInputRef}
                             onChange={handleFileChange}
                             style={{ display: 'none' }}
                             accept="application/pdf"
                         />
-                        <Button onClick={() => fileInputRef.current?.click()} disabled={isParsing || !!documentText}>
-                            {isParsing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
-                            {isParsing ? "Parsing..." : "Upload PDF"}
-                        </Button>
-                        <Button onClick={handleSuggest} disabled={!documentText || isSuggesting}>
-                            {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                            Smart Suggestion
-                        </Button>
-                         <Button onClick={() => handleDownloadRecoverable()} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
-                            {isDownloading === 'recoverable' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-                            Download (Recoverable)
-                        </Button>
-                         <Button onClick={() => handleDownloadSecure('flattened')} className="w-full" disabled={!originalPdf || redactionTerms.length === 0 || !!isDownloading}>
-                            {isDownloading === 'flattened' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-                            Download (Flattened)
-                        </Button>
                     </CardContent>
                     <CardFooter>
                          <Button variant="destructive" className="w-full" onClick={handleReset}><Trash2 className="mr-2 h-4 w-4" /> Reset</Button>
@@ -527,7 +541,14 @@ export function RedactionTool() {
                 {selectedText && (
                     <Card className="animate-in fade-in"><CardHeader><CardTitle>Manual Selection</CardTitle></CardHeader>
                         <CardContent><p className="text-sm font-mono p-2 bg-muted rounded">"{selectedText}"</p></CardContent>
-                        <CardFooter className="gap-2"><Button className="w-full" onClick={() => { setRedactionTerms(prev => [...prev, selectedText]); setSelectedText(''); }}>Add to List</Button><Button variant="ghost" size="icon" onClick={() => setSelectedText('')}><X className="h-4 w-4"/></Button></CardFooter>
+                        <CardFooter className="gap-2">
+                            <Button className="w-full" onClick={() => {
+                                setRedactionTerms(prev => [...new Set([...prev, selectedText])]);
+                                setSuggestedTerms(prev => prev.filter(t => t.toLowerCase() !== selectedText.toLowerCase()));
+                                setSelectedText('');
+                            }}>Add to List</Button>
+                            <Button variant="ghost" size="icon" onClick={() => setSelectedText('')}><X className="h-4 w-4"/></Button>
+                        </CardFooter>
                     </Card>
                 )}
                 
