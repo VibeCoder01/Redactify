@@ -301,7 +301,7 @@ export function RedactionTool() {
                 userPassword: encryptionPassword,
                 ownerPassword: encryptionPassword,
                 permissions: {
-                    printing: 'none',
+                    printing: false,
                     modifying: false,
                     copying: false,
                     annotating: false,
