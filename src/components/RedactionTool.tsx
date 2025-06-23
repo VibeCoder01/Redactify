@@ -287,12 +287,11 @@ export function RedactionTool() {
                             });
     
                             const textBlockHeight = bottomY - topY;
-                            const verticalPadding = 1;
 
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = page.getHeight() - (bottomY + verticalPadding);
-                            const boxHeight = textBlockHeight + (verticalPadding * 2);
+                            const boxY = page.getHeight() - bottomY;
+                            const boxHeight = textBlockHeight;
 
                             page.drawRectangle({
                                 x: boxX,
@@ -382,7 +381,7 @@ export function RedactionTool() {
                                 const h = item.height;
                                 
                                 // Heuristic for character bounding box from baseline and height
-                                const ascent = h * 0.8; 
+                                const ascent = h * 0.8;
                                 const descent = h * 0.2;
 
                                 minX = Math.min(minX, x);
@@ -392,12 +391,11 @@ export function RedactionTool() {
                             });
     
                             const textBlockHeight = bottomY - topY;
-                            const verticalPadding = 1;
 
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = page.getHeight() - (bottomY + verticalPadding);
-                            const boxHeight = textBlockHeight + (verticalPadding * 2);
+                            const boxY = page.getHeight() - bottomY;
+                            const boxHeight = textBlockHeight;
     
                             if (!redactionAreasByPage[pageIndex]) {
                                 redactionAreasByPage[pageIndex] = [];
