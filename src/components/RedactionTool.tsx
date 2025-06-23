@@ -236,6 +236,7 @@ export function RedactionTool() {
         setIsDrawing(false);
         setDrawStartPoint(null);
         setCurrentDrawing(null);
+        viewportRef.current?.focus();
     };
 
     const handleReset = () => {
