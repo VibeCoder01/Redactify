@@ -5,7 +5,7 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser } from "lucide-react";
@@ -169,14 +169,14 @@ export function RedactionTool() {
         if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current) return;
         
         const page = await pdfDocument.getPage(currentPageNumber);
-        const viewport = page.getViewport({ scale: 1.0 }); // Use scale 1.0 for PDF coordinate space
+        const renderViewport = page.getViewport({ scale: 2.0 });
         const canvas = canvasRef.current;
-        const scale = viewport.width / canvas.width; // PDF points per canvas pixel
+        const scale = renderViewport.height / canvas.height;
 
-        // Transform from canvas coords to PDF coords
+        // Transform from screen canvas coords to PDF points (origin bottom-left)
         const pdfCoords = {
             x: currentDrawing.x * scale,
-            y: viewport.height - (currentDrawing.y + currentDrawing.height) * scale,
+            y: renderViewport.height - (currentDrawing.y + currentDrawing.height) * scale,
             width: currentDrawing.width * scale,
             height: currentDrawing.height * scale
         };
@@ -252,10 +252,10 @@ export function RedactionTool() {
                 const pageRedactions = redactions.filter(r => r.pageIndex === i);
                 context.fillStyle = 'black';
                 pageRedactions.forEach(r => {
-                    const canvasX = r.x * viewport.scale;
-                    const canvasY = viewport.height - (r.y + r.height) * viewport.scale;
-                    const canvasWidth = r.width * viewport.scale;
-                    const canvasHeight = r.height * viewport.scale;
+                    const canvasX = r.x;
+                    const canvasY = viewport.height - (r.y + r.height);
+                    const canvasWidth = r.width;
+                    const canvasHeight = r.height;
                     context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
     
@@ -349,74 +349,78 @@ export function RedactionTool() {
     );
 
     return (
-        <div className="grid gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-                <CardHeader>
-                    <CardTitle>Document Viewer</CardTitle>
-                    <CardDescription>Click and drag on the document to draw redaction boxes.</CardDescription>
-                </CardHeader>
+        <div className="flex flex-col gap-6">
+            <Card>
+                <CardContent className="flex items-center justify-between p-4">
+                    <div className="flex items-center gap-4">
+                        {pdfDocument ? (
+                             <div className="flex items-center gap-x-4">
+                                <div className="flex items-center gap-2">
+                                    <Button variant="outline" size="icon" onClick={() => setCurrentPageNumber(p => Math.max(1, p - 1))} disabled={currentPageNumber <= 1}>
+                                        <ChevronLeft className="h-4 w-4" />
+                                    </Button>
+                                    <span className="text-sm text-muted-foreground">Page {currentPageNumber} of {totalPages}</span>
+                                    <Button variant="outline" size="icon" onClick={() => setCurrentPageNumber(p => Math.min(totalPages, p + 1))} disabled={currentPageNumber >= totalPages}>
+                                        <ChevronRight className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                                <p className="text-sm text-muted-foreground">Click and drag on the document to draw redaction boxes.</p>
+                            </div>
+                        ) : (
+                             <p className="text-sm text-muted-foreground">Upload a PDF by clicking or dragging into the area below.</p>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {pdfDocument && (
+                            <>
+                                <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0}>
+                                    <Eraser className="mr-2 h-4 w-4"/> Clear All
+                                </Button>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button disabled={!originalPdf || redactions.length === 0 || !!isDownloading}>
+                                            {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                                            Download PDF
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent>
+                                        <DropdownMenuItem onClick={handleDownloadRecoverable} disabled={!!isDownloading}>
+                                            Recoverable
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={handleDownloadSecure} disabled={!!isDownloading}>
+                                            Secure (Flattened)
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </>
+                        )}
+                        <Button variant="destructive" onClick={handleReset} disabled={!pdfDocument}>
+                            <Trash2 className="mr-2 h-4 w-4" /> Reset
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card>
                 <CardContent 
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                     className={cn("transition-colors relative p-0")}
                 >
-                    <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 flex items-center justify-center">
+                    <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20 flex items-center justify-center">
                         {documentViewer}
                     </ScrollArea>
                 </CardContent>
-                {pdfDocument && (
-                    <CardFooter className="justify-between items-center pt-6">
-                        <div className="flex items-center gap-2">
-                            <Button variant="outline" size="icon" onClick={() => setCurrentPageNumber(p => Math.max(1, p - 1))} disabled={currentPageNumber <= 1}>
-                                <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <span className="text-sm text-muted-foreground">Page {currentPageNumber} of {totalPages}</span>
-                            <Button variant="outline" size="icon" onClick={() => setCurrentPageNumber(p => Math.min(totalPages, p + 1))} disabled={currentPageNumber >= totalPages}>
-                                <ChevronRight className="h-4 w-4" />
-                            </Button>
-                        </div>
-                        <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0}>
-                            <Eraser className="mr-2 h-4 w-4"/> Clear All Redactions
-                        </Button>
-                    </CardFooter>
-                )}
             </Card>
 
-            <div className="lg:col-span-1 flex flex-col gap-6">
-                <Card>
-                    <CardHeader><CardTitle>Controls</CardTitle></CardHeader>
-                    <CardContent className="flex flex-col gap-4">
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button className="w-full" disabled={!originalPdf || redactions.length === 0 || !!isDownloading}>
-                                    {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-                                    Download PDF
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width]">
-                                <DropdownMenuItem onClick={handleDownloadRecoverable} disabled={!!isDownloading}>
-                                    Recoverable
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={handleDownloadSecure} disabled={!!isDownloading}>
-                                    Secure (Flattened)
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-
-                         <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileChange}
-                            style={{ display: 'none' }}
-                            accept="application/pdf"
-                        />
-                    </CardContent>
-                    <CardFooter>
-                         <Button variant="destructive" className="w-full" onClick={handleReset}><Trash2 className="mr-2 h-4 w-4" /> Reset</Button>
-                    </CardFooter>
-                </Card>
-            </div>
+            <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                accept="application/pdf"
+            />
         </div>
     );
 }
