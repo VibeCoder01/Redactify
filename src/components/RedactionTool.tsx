@@ -223,30 +223,23 @@ export function RedactionTool() {
                         // Ensure all parts of the match are on the same page before drawing
                         if (matchedItems.every(item => item.pageIndex === pageIndex)) {
                             const page = pages[pageIndex];
-                            const { height: pageHeight } = page.getSize();
                             
-                            let minX = Infinity, maxX = -Infinity;
-                            let minY = Infinity, maxY = -Infinity;
+                            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
-                            // Calculate a single bounding box that encloses all the text items in the match
-                            matchedItems.forEach(match => {
-                                const tx = match.transform[4];
-                                const ty = match.transform[5];
-                                minX = Math.min(minX, tx);
-                                maxX = Math.max(maxX, tx + match.width);
-                                minY = Math.min(minY, ty);
-                                maxY = Math.max(maxY, ty + match.height);
+                            matchedItems.forEach(item => {
+                                const [x, y, w, h] = [item.transform[4], item.transform[5], item.width, item.height];
+                                minX = Math.min(minX, x);
+                                maxX = Math.max(maxX, x + w);
+                                minY = Math.min(minY, y);
+                                maxY = Math.max(maxY, y + h);
                             });
 
-                            const padding = 2; // Horizontal padding
-                            const textHeight = maxY - minY;
-                            const verticalPadding = textHeight * 0.25; // Add 25% padding top and bottom
-
-                            const boxWidth = (maxX - minX) + (padding * 2);
-                            const boxHeight = textHeight + (verticalPadding * 2);
-                            const boxX = minX - padding;
-                            const boxY = pageHeight - (maxY + verticalPadding);
-
+                            const textBlockHeight = maxY - minY;
+                            
+                            const boxX = minX - 2;
+                            const boxWidth = (maxX - minX) + 4;
+                            const boxY = minY - (textBlockHeight * 0.2); // Shift down from baseline
+                            const boxHeight = textBlockHeight * 1.4; // Make box taller than text block
 
                             page.drawRectangle({
                                 x: boxX,
