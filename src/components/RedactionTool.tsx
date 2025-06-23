@@ -183,7 +183,7 @@ export function RedactionTool() {
 
         setIsDownloading(true);
         try {
-            const pdfDoc = await PDFDocument.load(originalPdf);
+            const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
             const pages = pdfDoc.getPages();
             const allTerms = [...new Set(redactionTerms)];
 
@@ -223,6 +223,7 @@ export function RedactionTool() {
                         // Ensure all parts of the match are on the same page before drawing
                         if (matchedItems.every(item => item.pageIndex === pageIndex)) {
                             const page = pages[pageIndex];
+                            const { height: pageHeight } = page.getSize();
                             
                             let minX = Infinity, maxX = -Infinity;
                             let minY = Infinity, maxY = -Infinity;
@@ -237,11 +238,20 @@ export function RedactionTool() {
                                 maxY = Math.max(maxY, ty + match.height);
                             });
 
+                            const padding = 2; // Add some padding to ensure full coverage
+
+                            // Convert y-coordinate from pdf.js (top-left origin) to pdf-lib (bottom-left origin)
+                            const boxWidth = (maxX - minX) + (padding * 2);
+                            const boxHeight = (maxY - minY) + (padding * 2);
+                            const boxX = minX - padding;
+                            const boxY = pageHeight - maxY - padding;
+
+
                             page.drawRectangle({
-                                x: minX,
-                                y: minY,
-                                width: maxX - minX,
-                                height: maxY - minY,
+                                x: boxX,
+                                y: boxY,
+                                width: boxWidth,
+                                height: boxHeight,
                                 color: rgb(0, 0, 0),
                             });
                         }
