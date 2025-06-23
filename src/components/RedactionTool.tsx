@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useTransition, useMemo, useRef } from "react";
+import React, { useState, useTransition, useMemo, useRef, useCallback } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
@@ -153,18 +153,31 @@ export function RedactionTool() {
         });
     };
     
-    const acceptSuggestion = (term: string) => {
+    const acceptSuggestion = useCallback((term: string) => {
         setRedactionTerms(prev => [...new Set([...prev, term])]);
-        setSuggestedTerms(prev => prev.filter(t => t !== term));
-    }
+        setSuggestedTerms(prev => prev.filter(t => t.toLowerCase() !== term.toLowerCase()));
+    }, []);
 
-    const rejectSuggestion = (term: string) => {
+    const rejectSuggestion = useCallback((term: string) => {
         setSuggestedTerms(prev => prev.filter(t => t !== term));
-    }
+    }, []);
 
-    const removeRedactionTerm = (term: string) => {
+    const removeRedactionTerm = useCallback((term: string) => {
         setRedactionTerms(prev => prev.filter(t => t !== term));
-    }
+    }, []);
+
+    const toggleTermInViewer = useCallback((term: string) => {
+        const isRedacted = redactionTerms.some(rt => rt.toLowerCase() === term.toLowerCase());
+        if (isRedacted) {
+            // From redaction to suggestion
+            setRedactionTerms(prev => prev.filter(t => t.toLowerCase() !== term.toLowerCase()));
+            setSuggestedTerms(prev => [...new Set([term, ...prev])]);
+        } else {
+            // From suggestion to redaction
+            acceptSuggestion(term);
+        }
+    }, [redactionTerms, acceptSuggestion]);
+
 
     const handleReset = () => {
         setDocumentText("");
@@ -449,19 +462,19 @@ export function RedactionTool() {
                     const matchedTerm = uniqueAllTerms.find(t => t.term.toLowerCase() === part.toLowerCase());
                     if (matchedTerm) {
                         const isRedaction = redactionTerms.some(rt => rt.toLowerCase() === part.toLowerCase());
-                        let className = 'rounded px-0.5 py-0.5';
+                        let className = 'rounded px-0.5 py-0.5 cursor-pointer';
                         if (isRedaction) {
-                            className += ' bg-primary/30';
+                            className += ' bg-primary/30 line-through';
                         } else {
-                            className += ' bg-accent/30 cursor-pointer hover:bg-accent/50';
+                            className += ' bg-accent/30 hover:bg-accent/50';
                         }
-                        return <mark key={index} className={className} onClick={() => !isRedaction && acceptSuggestion(part)}>{part}</mark>;
+                        return <mark key={index} className={className} onClick={() => toggleTermInViewer(part)}>{part}</mark>;
                     }
                     return <span key={index}>{part}</span>;
                 })}
             </pre>
         );
-    }, [documentText, redactionTerms, suggestedTerms, isParsing]);
+    }, [documentText, redactionTerms, suggestedTerms, isParsing, toggleTermInViewer]);
 
 
     return (
