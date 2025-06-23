@@ -216,14 +216,6 @@ export function RedactionTool() {
         setSuggestedTerms(prev => prev.filter(t => t.toLowerCase() !== term.toLowerCase()));
     }, []);
 
-    const rejectSuggestion = useCallback((term: string) => {
-        setSuggestedTerms(prev => prev.filter(t => t !== term));
-    }, []);
-
-    const removeRedactionTerm = useCallback((term: string) => {
-        setRedactionTerms(prev => prev.filter(t => t !== term));
-    }, []);
-
     const toggleTermInViewer = useCallback((term: string) => {
         const isRedacted = redactionTerms.some(rt => rt.toLowerCase() === term.toLowerCase());
         if (isRedacted) {
@@ -234,7 +226,7 @@ export function RedactionTool() {
             // From suggestion to redaction
             acceptSuggestion(term);
         }
-    }, [redactionTerms, acceptSuggestion]);
+    }, [redactionTerms, suggestedTerms, acceptSuggestion]);
 
 
     const handleReset = () => {
@@ -265,16 +257,14 @@ export function RedactionTool() {
                 const text = item.str;
                 for (let i = 0; i < text.length; i++) {
                     const char = text[i];
-                    if (char.trim() !== '') {
-                        searchableTextChars.push(char);
-                        charToItemMap.push(index);
-                    }
+                    searchableTextChars.push(char);
+                    charToItemMap.push(index);
                 }
             });
             const searchableText = searchableTextChars.join('').toLowerCase();
     
             for (const term of allTerms) {
-                const termToSearch = term.replace(/\s/g, '').toLowerCase();
+                const termToSearch = term.toLowerCase();
                 if (termToSearch.length === 0) continue;
     
                 let startIndex = 0;
@@ -302,7 +292,7 @@ export function RedactionTool() {
                             const textBlockHeight = maxY - minY;
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.25);
+                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.35);
                             const boxHeight = textBlockHeight * 1.6;
 
                             page.drawRectangle({
@@ -314,7 +304,7 @@ export function RedactionTool() {
                             });
                         }
                     }
-                    startIndex = foundIndex + 1;
+                    startIndex = foundIndex + termToSearch.length;
                 }
             }
 
@@ -363,16 +353,14 @@ export function RedactionTool() {
                 const text = item.str;
                 for (let i = 0; i < text.length; i++) {
                     const char = text[i];
-                    if (char.trim() !== '') {
-                        searchableTextChars.push(char);
-                        charToItemMap.push(index);
-                    }
+                    searchableTextChars.push(char);
+                    charToItemMap.push(index);
                 }
             });
             const searchableText = searchableTextChars.join('').toLowerCase();
     
             for (const term of allTerms) {
-                const termToSearch = term.replace(/\s/g, '').toLowerCase();
+                const termToSearch = term.toLowerCase();
                 if (termToSearch.length === 0) continue;
     
                 let startIndex = 0;
@@ -400,7 +388,7 @@ export function RedactionTool() {
                             const textBlockHeight = maxY - minY;
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.25);
+                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.35);
                             const boxHeight = textBlockHeight * 1.6;
     
                             if (!redactionAreasByPage[pageIndex]) {
@@ -409,7 +397,7 @@ export function RedactionTool() {
                             redactionAreasByPage[pageIndex].push({ x: boxX, y: boxY, width: boxWidth, height: boxHeight });
                         }
                     }
-                    startIndex = foundIndex + 1;
+                    startIndex = foundIndex + termToSearch.length;
                 }
             }
     
@@ -428,7 +416,7 @@ export function RedactionTool() {
                 const redactionAreas = redactionAreasByPage[i] || [];
                 context.fillStyle = 'black';
                 redactionAreas.forEach(area => {
-                    context.fillRect(area.x * viewport.scale, area.y * viewport.scale, area.width * viewport.scale, area.height * viewport.scale);
+                    context.fillRect(area.x * viewport.scale, (viewport.height - area.y - area.height) * viewport.scale, area.width * viewport.scale, area.height * viewport.scale);
                 });
     
                 const imageBytes = await new Promise<Uint8Array>((resolve) => {
@@ -610,34 +598,51 @@ export function RedactionTool() {
                 )}
                 
                 {suggestedTerms.length > 0 && (
-                    <Card><CardHeader><CardTitle>Suggested Terms</CardTitle></CardHeader>
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Suggested Terms</CardTitle>
+                            <CardDescription>Click a term to add it to the redaction list.</CardDescription>
+                        </CardHeader>
                         <CardContent>
-                            <ScrollArea className="h-32"><div className="space-y-2">
-                                {suggestedTerms.map((term, i) => (
-                                    <div key={i} className="flex items-center justify-between text-sm p-2 rounded-md hover:bg-muted">
-                                        <span className="font-mono">{term}</span>
-                                        <div className="flex items-center gap-1">
-                                            <TooltipProvider><Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7 text-green-500 hover:text-green-500" onClick={() => acceptSuggestion(term)}><Check className="h-4 w-4"/></Button></TooltipTrigger><TooltipContent><p>Accept</p></TooltipContent></Tooltip></TooltipProvider>
-                                            <TooltipProvider><Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-500" onClick={() => rejectSuggestion(term)}><X className="h-4 w-4"/></Button></TooltipTrigger><TooltipContent><p>Reject</p></TooltipContent></Tooltip></TooltipProvider>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div></ScrollArea>
+                            <ScrollArea className="h-32">
+                                <div className="flex flex-wrap gap-2">
+                                    {suggestedTerms.map((term, i) => (
+                                        <Badge
+                                            key={i}
+                                            variant="outline"
+                                            className="text-base font-normal cursor-pointer hover:bg-accent/20"
+                                            onClick={() => toggleTermInViewer(term)}
+                                        >
+                                            {term}
+                                        </Badge>
+                                    ))}
+                                </div>
+                            </ScrollArea>
                         </CardContent>
                     </Card>
                 )}
 
                 {redactionTerms.length > 0 && (
-                    <Card><CardHeader><CardTitle>Redaction List</CardTitle><CardDescription>{redactionTerms.length} term(s) will be redacted.</CardDescription></CardHeader>
+                     <Card>
+                        <CardHeader>
+                            <CardTitle>Redaction List</CardTitle>
+                            <CardDescription>{redactionTerms.length} term(s) will be redacted. Click to remove.</CardDescription>
+                        </CardHeader>
                         <CardContent>
-                            <ScrollArea className="h-32"><div className="flex flex-wrap gap-2">
-                                {redactionTerms.map((term, i) => (
-                                    <Badge key={i} variant="secondary" className="text-base font-normal">
-                                        {term}
-                                        <button onClick={() => removeRedactionTerm(term)} className="ml-2 rounded-full hover:bg-destructive/20 p-0.5"><X className="h-3 w-3 text-destructive"/></button>
-                                    </Badge>
-                                ))}
-                            </div></ScrollArea>
+                            <ScrollArea className="h-32">
+                                <div className="flex flex-wrap gap-2">
+                                    {redactionTerms.map((term, i) => (
+                                        <Badge
+                                            key={i}
+                                            variant="default"
+                                            className="text-base font-normal cursor-pointer hover:bg-primary/80"
+                                            onClick={() => toggleTermInViewer(term)}
+                                        >
+                                            {term}
+                                        </Badge>
+                                    ))}
+                                </div>
+                            </ScrollArea>
                         </CardContent>
                     </Card>
                 )}
@@ -645,5 +650,3 @@ export function RedactionTool() {
         </div>
     );
 }
-
-    
