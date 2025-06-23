@@ -297,7 +297,7 @@ export function RedactionTool() {
             const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
             await applyRedactionsToPdf(pdfDoc);
             
-            pdfDoc.encrypt({
+            const pdfBytes = await pdfDoc.save({
                 userPassword: encryptionPassword,
                 ownerPassword: encryptionPassword,
                 permissions: {
@@ -310,8 +310,6 @@ export function RedactionTool() {
                     documentAssembly: false,
                 }
             });
-
-            const pdfBytes = await pdfDoc.save();
 
             downloadPdf(pdfBytes, 'redacted-document-recoverable-encrypted.pdf');
             toast({ title: "Encryption Successful", description: "The PDF is now password-protected. Try opening the downloaded file to verify." });
