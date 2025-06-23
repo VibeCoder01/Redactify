@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useTransition, useMemo, useRef } from "react";
@@ -65,11 +66,7 @@ export function RedactionTool() {
             const buffer = e.target?.result as ArrayBuffer;
             if (buffer) {
                 try {
-                    // Store the original buffer in state. This will be used for redaction.
                     setOriginalPdf(buffer);
-                    
-                    // Create a copy of the buffer for pdf.js to parse.
-                    // This prevents pdf.js from detaching the buffer, which would make it unusable for pdf-lib later.
                     const bufferForParsing = buffer.slice(0);
                     const pdf = await pdfjsLib.getDocument({ data: bufferForParsing }).promise;
                     let fullText = "";
@@ -190,11 +187,23 @@ export function RedactionTool() {
             const pages = pdfDoc.getPages();
             const allTerms = [...new Set(redactionTerms)];
 
-            const searchableText = pdfTextItems.map(i => i.str).join('');
+            // Create a searchable text string without spaces, and a map to get back to original items.
+            // This allows for matching terms that span across multiple text chunks from the PDF.
+            const searchableTextChars: string[] = [];
             const charToItemMap: number[] = [];
             pdfTextItems.forEach((item, index) => {
-                for (let k = 0; k < item.str.length; k++) charToItemMap.push(index);
+                const text = item.str;
+                for (let i = 0; i < text.length; i++) {
+                    const char = text[i];
+                    // Build a string of only non-whitespace characters for searching
+                    if (char.trim() !== '') {
+                        searchableTextChars.push(char);
+                        // Map each character in the searchable string back to its original item
+                        charToItemMap.push(index);
+                    }
+                }
             });
+            const searchableText = searchableTextChars.join('').toLowerCase();
 
             for (const term of allTerms) {
                 const termToSearch = term.replace(/\s/g, '').toLowerCase();
@@ -202,38 +211,43 @@ export function RedactionTool() {
 
                 let startIndex = 0;
                 let foundIndex;
-                while ((foundIndex = searchableText.toLowerCase().indexOf(termToSearch, startIndex)) > -1) {
+
+                // Loop to find all occurrences of the term
+                while ((foundIndex = searchableText.indexOf(termToSearch, startIndex)) > -1) {
                     const firstItemIdx = charToItemMap[foundIndex];
                     const lastItemIdx = charToItemMap[foundIndex + termToSearch.length - 1];
                     const matchedItems = pdfTextItems.slice(firstItemIdx, lastItemIdx + 1);
 
                     if (matchedItems.length > 0) {
                         const pageIndex = matchedItems[0].pageIndex;
+                        // Ensure all parts of the match are on the same page before drawing
                         if (matchedItems.every(item => item.pageIndex === pageIndex)) {
                             const page = pages[pageIndex];
-                            const { height: pageHeight } = page.getSize();
                             
                             let minX = Infinity, maxX = -Infinity;
+                            let minY = Infinity, maxY = -Infinity;
+
+                            // Calculate a single bounding box that encloses all the text items in the match
                             matchedItems.forEach(match => {
                                 const tx = match.transform[4];
+                                const ty = match.transform[5];
                                 minX = Math.min(minX, tx);
                                 maxX = Math.max(maxX, tx + match.width);
+                                minY = Math.min(minY, ty);
+                                maxY = Math.max(maxY, ty + match.height);
                             });
-
-                            const boxHeight = Math.max(...matchedItems.map(m => m.height)) * 1.2;
-                            const boxBottomY = Math.max(...matchedItems.map(m => m.transform[5]));
-                            const y = pageHeight - boxBottomY;
 
                             page.drawRectangle({
                                 x: minX,
-                                y: y,
+                                y: minY,
                                 width: maxX - minX,
-                                height: boxHeight,
+                                height: maxY - minY,
                                 color: rgb(0, 0, 0),
                             });
                         }
                     }
-                    startIndex = foundIndex + termToSearch.length;
+                    // Continue searching from the character after the start of the last match
+                    startIndex = foundIndex + 1;
                 }
             }
 
