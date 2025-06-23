@@ -131,6 +131,26 @@ export function RedactionTool() {
         }
     };
     
+    const handleDoubleClick = () => {
+        const selection = window.getSelection();
+        const text = selection?.toString().trim();
+
+        if (text && !redactionTerms.includes(text) && !suggestedTerms.includes(text)) {
+            setSuggestedTerms(prev => [...new Set([text, ...prev])]);
+            setSelectedText(""); // Prevents manual selection card from appearing
+
+            toast({
+                title: "Suggestion Added",
+                description: `"${text}" has been added to your suggested terms.`,
+            });
+            
+            // Clear browser selection to avoid confusion
+            if(selection) {
+                selection.removeAllRanges();
+            }
+        }
+    };
+
     const handleSuggest = () => {
         startSuggestionTransition(async () => {
             try {
@@ -488,7 +508,7 @@ export function RedactionTool() {
                     <CardDescription>Select text to redact or use Smart Suggestions. Formatting will be preserved on download.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 p-4" onMouseUp={handleSelection} onClick={handleSelection}>
+                    <ScrollArea className="h-[60vh] w-full rounded-md border bg-muted/20 p-4" onMouseUp={handleSelection} onClick={handleSelection} onDoubleClick={handleDoubleClick}>
                         {highlightedDocument}
                     </ScrollArea>
                 </CardContent>
@@ -588,5 +608,3 @@ export function RedactionTool() {
         </div>
     );
 }
-
-    
