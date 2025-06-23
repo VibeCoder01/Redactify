@@ -268,21 +268,31 @@ export function RedactionTool() {
                         const pageIndex = matchedItems[0].pageIndex;
                         if (matchedItems.every(item => item.pageIndex === pageIndex)) {
                             const page = pages[pageIndex];
-                            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                            let minX = Infinity, maxX = -Infinity, topY = Infinity, bottomY = -Infinity;
     
                             matchedItems.forEach(item => {
-                                const [x, y, w, h] = [item.transform[4], item.transform[5], item.width, item.height];
+                                const x = item.transform[4];
+                                const y = item.transform[5]; // baseline, top-down
+                                const w = item.width;
+                                const h = item.height;
+
+                                // Heuristic for character bounding box from baseline and height
+                                const ascent = h * 0.8; 
+                                const descent = h * 0.2;
+
                                 minX = Math.min(minX, x);
                                 maxX = Math.max(maxX, x + w);
-                                minY = Math.min(minY, y);
-                                maxY = Math.max(maxY, y + h);
+                                topY = Math.min(topY, y - ascent);
+                                bottomY = Math.max(bottomY, y + descent);
                             });
     
-                            const textBlockHeight = maxY - minY;
+                            const textBlockHeight = bottomY - topY;
+                            const verticalPadding = 1;
+
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.35);
-                            const boxHeight = textBlockHeight * 1.6;
+                            const boxY = page.getHeight() - (bottomY + verticalPadding);
+                            const boxHeight = textBlockHeight + (verticalPadding * 2);
 
                             page.drawRectangle({
                                 x: boxX,
@@ -363,21 +373,31 @@ export function RedactionTool() {
                         const pageIndex = matchedItems[0].pageIndex;
                         if (matchedItems.every(item => item.pageIndex === pageIndex)) {
                             const page = originalPages[pageIndex];
-                            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                            let minX = Infinity, maxX = -Infinity, topY = Infinity, bottomY = -Infinity;
     
                             matchedItems.forEach(item => {
-                                const [x, y, w, h] = [item.transform[4], item.transform[5], item.width, item.height];
+                                const x = item.transform[4];
+                                const y = item.transform[5]; // baseline, top-down
+                                const w = item.width;
+                                const h = item.height;
+                                
+                                // Heuristic for character bounding box from baseline and height
+                                const ascent = h * 0.8; 
+                                const descent = h * 0.2;
+
                                 minX = Math.min(minX, x);
                                 maxX = Math.max(maxX, x + w);
-                                minY = Math.min(minY, y);
-                                maxY = Math.max(maxY, y + h);
+                                topY = Math.min(topY, y - ascent);
+                                bottomY = Math.max(bottomY, y + descent);
                             });
     
-                            const textBlockHeight = maxY - minY;
+                            const textBlockHeight = bottomY - topY;
+                            const verticalPadding = 1;
+
                             const boxX = minX - 2;
                             const boxWidth = (maxX - minX) + 4;
-                            const boxY = page.getHeight() - (minY + textBlockHeight * 1.35);
-                            const boxHeight = textBlockHeight * 1.6;
+                            const boxY = page.getHeight() - (bottomY + verticalPadding);
+                            const boxHeight = textBlockHeight + (verticalPadding * 2);
     
                             if (!redactionAreasByPage[pageIndex]) {
                                 redactionAreasByPage[pageIndex] = [];
