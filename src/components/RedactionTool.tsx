@@ -146,25 +146,29 @@ export function RedactionTool() {
         setIsDraggingOver(false);
     };
 
+    const getMousePos = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!canvasRef.current) return {x: 0, y: 0};
+        const rect = canvasRef.current.getBoundingClientRect();
+        return {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top
+        };
+    }
+
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!canvasRef.current || !pdfDocument) return;
-        const rect = canvasRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
         setIsDrawing(true);
-        setDrawStartPoint({ x, y });
+        setDrawStartPoint(getMousePos(e));
     };
     
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!isDrawing || !drawStartPoint || !canvasRef.current) return;
-        const rect = canvasRef.current.getBoundingClientRect();
-        const currentX = e.clientX - rect.left;
-        const currentY = e.clientY - rect.top;
+        const currentPos = getMousePos(e);
     
-        const x = Math.min(drawStartPoint.x, currentX);
-        const y = Math.min(drawStartPoint.y, currentY);
-        const width = Math.abs(currentX - drawStartPoint.x);
-        const height = Math.abs(currentY - drawStartPoint.y);
+        const x = Math.min(drawStartPoint.x, currentPos.x);
+        const y = Math.min(drawStartPoint.y, currentPos.y);
+        const width = Math.abs(currentPos.x - drawStartPoint.x);
+        const height = Math.abs(currentPos.y - drawStartPoint.y);
         setCurrentDrawing({ x, y, width, height });
     };
 
@@ -416,7 +420,9 @@ export function RedactionTool() {
                     className={cn("transition-colors relative p-0")}
                 >
                     <ScrollArea className="h-[70vh] w-full rounded-md border bg-muted/20">
-                        {documentViewer}
+                        <div className="grid min-h-full w-full place-items-center p-4">
+                            {documentViewer}
+                        </div>
                     </ScrollArea>
                 </CardContent>
             </Card>
