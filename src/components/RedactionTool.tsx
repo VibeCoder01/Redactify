@@ -255,9 +255,6 @@ export function RedactionTool() {
                 }
             }
             
-            // Flatten the PDF to make redactions permanent
-            pdfDoc.flatten();
-
             const pdfBytes = await pdfDoc.save();
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
