@@ -235,46 +235,40 @@ export function RedactionTool() {
     const findMatchingTextItems = (term: string) => {
         const results: PdfTextItem[][] = [];
         const termToSearch = term.toLowerCase();
-    
+
         for (let i = 0; i < pdfTextItems.length; i++) {
             let buffer = '';
             const matchedItems: PdfTextItem[] = [];
-    
+
             for (let j = i; j < pdfTextItems.length; j++) {
                 const currentItem = pdfTextItems[j];
                 const prevItem = j > i ? pdfTextItems[j - 1] : null;
-    
+
                 if (prevItem) {
-                    // Break if items are on different pages or not reasonably contiguous
                     if (currentItem.pageIndex !== prevItem.pageIndex) break;
-    
+
                     const yDiff = Math.abs(currentItem.transform[5] - prevItem.transform[5]);
                     const isNewLine = yDiff > currentItem.height * 0.5;
                     if(isNewLine) break;
-    
+
                     const gap = currentItem.transform[4] - (prevItem.transform[4] + prevItem.width);
-                    if (gap > currentItem.height) break; // If gap is too large, it's not the same phrase
+                    if (gap > currentItem.height * 0.5) break; 
                     
-                    if(gap > 0.1) { // Add a space for small gaps
+                    if(gap > 0.1) { 
                         buffer += ' ';
                     }
                 }
-    
+
                 buffer += currentItem.str;
                 matchedItems.push(currentItem);
 
-                // If the buffer now contains the term, we have a potential match
-                if (buffer.toLowerCase().includes(termToSearch)) {
-                    // To avoid partial matches (e.g. "red" in "redaction"), we do a trick:
-                    // we replace the found term in our buffer and see if the remaining parts are small (punctuation, etc.)
-                    const remainder = buffer.toLowerCase().replace(termToSearch, '').trim();
-                    if (remainder.length < 2) {
-                        results.push(matchedItems);
-                        i = j; // Skip past the items we just matched
-                        break; // Move to the next starting position `i`
-                    }
+                if (buffer.toLowerCase() === termToSearch) {
+                    results.push(matchedItems);
+                    i = j; 
+                    break;
                 }
-                if (buffer.length > term.length + 20) break;
+                
+                if (buffer.length > term.length + 10) break;
             }
         }
         return results;
@@ -304,17 +298,14 @@ export function RedactionTool() {
                             const w = item.width;
                             const h = item.height;
 
-                            const ascent = h * 0.8;
-                            const descent = h * 0.2;
-
                             minX = Math.min(minX, x);
                             maxX = Math.max(maxX, x + w);
-                            topY = Math.min(topY, y - ascent);
-                            bottomY = Math.max(bottomY, y + descent);
+                            topY = Math.min(topY, y - h);
+                            bottomY = Math.max(bottomY, y);
                         });
 
-                        const boxX = minX - 1;
-                        const boxWidth = (maxX - minX) + 2;
+                        const boxX = minX;
+                        const boxWidth = maxX - minX;
                         const boxY = page.getHeight() - bottomY;
                         const boxHeight = bottomY - topY;
 
@@ -383,17 +374,14 @@ export function RedactionTool() {
                             const w = item.width;
                             const h = item.height;
                             
-                            const ascent = h * 0.8;
-                            const descent = h * 0.2;
-
                             minX = Math.min(minX, x);
                             maxX = Math.max(maxX, x + w);
-                            topY = Math.min(topY, y - ascent);
-                            bottomY = Math.max(bottomY, y + descent);
+                            topY = Math.min(topY, y - h);
+                            bottomY = Math.max(bottomY, y);
                         });
     
-                        const boxX = minX - 1;
-                        const boxWidth = (maxX - minX) + 2;
+                        const boxX = minX;
+                        const boxWidth = maxX - minX;
                         const boxY = page.getHeight() - bottomY;
                         const boxHeight = bottomY - topY;
     
