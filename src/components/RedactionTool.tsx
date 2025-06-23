@@ -82,9 +82,12 @@ export function RedactionTool() {
     useEffect(() => {
         if (pdfDocument) {
             renderPage(currentPageNumber);
-            setPanOffset({ x: 0, y: 0 }); // Reset pan on page change
         }
     }, [pdfDocument, currentPageNumber, renderPage]);
+
+    useEffect(() => {
+        setPanOffset({ x: 0, y: 0 }); // Reset pan on page change
+    }, [pdfDocument, currentPageNumber]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
