@@ -59,7 +59,6 @@ export function RedactionTool() {
         if (context) {
             await page.render({ canvasContext: context, viewport }).promise;
 
-            // Draw existing redactions for this page
             context.fillStyle = 'rgba(0, 0, 0, 0.7)';
             redactions
                 .filter(r => r.pageIndex === pageNum - 1)
@@ -145,18 +144,22 @@ export function RedactionTool() {
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!interactionRef.current || !pdfDocument) return;
+        const scrollContainer = interactionRef.current.parentElement;
+        if (!scrollContainer) return;
         const rect = interactionRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const x = e.clientX - rect.left + scrollContainer.scrollLeft;
+        const y = e.clientY - rect.top + scrollContainer.scrollTop;
         setIsDrawing(true);
         setDrawStartPoint({ x, y });
     };
 
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!isDrawing || !drawStartPoint || !interactionRef.current) return;
+        const scrollContainer = interactionRef.current.parentElement;
+        if (!scrollContainer) return;
         const rect = interactionRef.current.getBoundingClientRect();
-        const currentX = e.clientX - rect.left;
-        const currentY = e.clientY - rect.top;
+        const currentX = e.clientX - rect.left + scrollContainer.scrollLeft;
+        const currentY = e.clientY - rect.top + scrollContainer.scrollTop;
 
         const x = Math.min(drawStartPoint.x, currentX);
         const y = Math.min(drawStartPoint.y, currentY);
@@ -170,15 +173,16 @@ export function RedactionTool() {
         
         const page = await pdfDocument.getPage(currentPageNumber);
         const renderViewport = page.getViewport({ scale: 2.0 });
-        const canvas = canvasRef.current;
-        const scale = renderViewport.height / canvas.height;
+        
+        const scaleX = canvasRef.current.width / renderViewport.width;
+        const scaleY = canvasRef.current.height / renderViewport.height;
 
         // Transform from screen canvas coords to PDF points (origin bottom-left)
         const pdfCoords = {
-            x: currentDrawing.x * scale,
-            y: renderViewport.height - (currentDrawing.y + currentDrawing.height) * scale,
-            width: currentDrawing.width * scale,
-            height: currentDrawing.height * scale
+            x: currentDrawing.x / scaleX,
+            y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / scaleY,
+            width: currentDrawing.width / scaleX,
+            height: currentDrawing.height / scaleY
         };
 
         setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
@@ -252,10 +256,10 @@ export function RedactionTool() {
                 const pageRedactions = redactions.filter(r => r.pageIndex === i);
                 context.fillStyle = 'black';
                 pageRedactions.forEach(r => {
-                    const canvasX = r.x;
-                    const canvasY = viewport.height - (r.y + r.height);
-                    const canvasWidth = r.width;
-                    const canvasHeight = r.height;
+                    const canvasX = r.x * viewport.scale;
+                    const canvasY = viewport.height - (r.y + r.height) * viewport.scale;
+                    const canvasWidth = r.width * viewport.scale;
+                    const canvasHeight = r.height * viewport.scale;
                     context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
                 });
     
@@ -331,7 +335,7 @@ export function RedactionTool() {
                 </div>
             )}
             {pdfDocument && (
-                 <div ref={interactionRef} className="relative w-full h-full cursor-crosshair" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+                 <div ref={interactionRef} className="relative h-full cursor-crosshair" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
                     <canvas ref={canvasRef} />
                     {isDrawing && currentDrawing && (
                         <div className="absolute border-2 border-dashed border-primary bg-primary/20 pointer-events-none"
@@ -364,7 +368,7 @@ export function RedactionTool() {
                                         <ChevronRight className="h-4 w-4" />
                                     </Button>
                                 </div>
-                                <p className="text-sm text-muted-foreground">Click and drag on the document to draw redaction boxes.</p>
+                                <p className="text-sm text-muted-foreground hidden md:block">Click and drag on the document to draw redaction boxes.</p>
                             </div>
                         ) : (
                              <p className="text-sm text-muted-foreground">Upload a PDF by clicking or dragging into the area below.</p>
