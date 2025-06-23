@@ -7,7 +7,7 @@ import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser } from "lucide-react";
+import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser, Undo2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -79,17 +79,28 @@ export function RedactionTool() {
         }
     }, [pdfDocument, redactions]);
 
+    // This effect handles re-rendering the canvas when the page or redactions change.
     useEffect(() => {
         if (pdfDocument) {
             renderPage(currentPageNumber);
         }
     }, [pdfDocument, currentPageNumber, renderPage, redactions]);
 
+    // This effect handles resetting pan when the document or page changes.
     useEffect(() => {
         if (pdfDocument) {
             setPanOffset({ x: 0, y: 0 }); // Reset pan on page change
         }
     }, [pdfDocument, currentPageNumber]);
+
+    const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+        if (!pdfDocument) return;
+        e.preventDefault();
+        setPanOffset(p => ({
+            x: p.x - e.deltaX,
+            y: p.y - e.deltaY,
+        }));
+    };
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -252,6 +263,11 @@ export function RedactionTool() {
         setPanOffset({x: 0, y: 0});
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
+
+    const handleUndo = () => {
+        setRedactions(prev => prev.slice(0, -1));
+        viewportRef.current?.focus();
+    };
     
     const applyRedactionsToPdf = async (pdfDoc: PDFDocument) => {
         const pages = pdfDoc.getPages();
@@ -376,7 +392,7 @@ export function RedactionTool() {
                                         <ChevronRight className="h-4 w-4" />
                                     </Button>
                                 </div>
-                                <p className="text-sm text-muted-foreground hidden md:block">Click and drag to redact. Use arrow keys to navigate.</p>
+                                <p className="text-sm text-muted-foreground hidden md:block">Click and drag to redact. Use arrow keys or trackpad to navigate.</p>
                             </div>
                         ) : (
                              <p className="text-sm text-muted-foreground">Upload a PDF to begin.</p>
@@ -385,6 +401,9 @@ export function RedactionTool() {
                     <div className="flex items-center gap-2">
                         {pdfDocument && (
                             <>
+                                <Button variant="outline" onClick={handleUndo} disabled={redactions.length === 0}>
+                                    <Undo2 className="mr-2 h-4 w-4"/> Undo
+                                </Button>
                                 <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0}>
                                     <Eraser className="mr-2 h-4 w-4"/> Clear All
                                 </Button>
@@ -419,6 +438,7 @@ export function RedactionTool() {
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
+                    onWheel={handleWheel}
                     tabIndex={-1}
                     className={cn(
                         "transition-colors relative p-0 h-[70vh] w-full rounded-md border bg-muted/20 overflow-hidden focus:outline-none",
@@ -473,7 +493,7 @@ export function RedactionTool() {
                                 <FileUp className="mx-auto h-12 w-12 text-muted-foreground" />
                                 <h3 className="mt-2 text-sm font-semibold text-foreground">Upload a Document</h3>
                                 <p className="mt-1 text-sm text-muted-foreground">Drag & drop or click to upload a PDF.</p>
-                                <p className="mt-4 text-xs text-muted-foreground">Use arrow keys to navigate the document.</p>
+                                <p className="mt-4 text-xs text-muted-foreground">Use arrow keys or trackpad to navigate the document.</p>
                             </div>
                         ) : null}
                     </div>
@@ -490,3 +510,5 @@ export function RedactionTool() {
         </div>
     );
 }
+
+    
