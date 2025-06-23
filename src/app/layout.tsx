@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/toaster"
 
 export const metadata: Metadata = {
   title: 'Redactify',
-  description: 'An intelligent tool to help you redact sensitive information from your documents.',
+  description: 'A tool to help you redact sensitive information from your documents.',
 };
 
 export default function RootLayout({
