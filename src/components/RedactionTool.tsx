@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useTransition, useMemo } from "react";
+import React, { useState, useTransition, useMemo, useRef } from "react";
+import * as pdfjsLib from "pdfjs-dist";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,22 +11,9 @@ import { FileUp, Sparkles, Download, Loader2, X, Check, Trash2 } from "lucide-re
 import { suggestRedactionTerms } from "@/ai/flows/suggest-redaction-terms";
 import { useToast } from "@/hooks/use-toast";
 
-const sampleText = `From: John Doe (john.doe@example.com)
-To: Jane Smith (jane.smith@example.com)
-Date: October 26, 2023
-Subject: Project Alpha Financials
-
-Hi Jane,
-
-Please find the attached financial report for Project Alpha.
-The total budget is $1,500,000. My social security number is 123-456-7890 for verification.
-Our client's address is 123 Main St, Anytown, USA, 12345.
-My phone number is (555) 123-4567.
-
-This information is confidential.
-
-Regards,
-John Doe`;
+if (typeof window !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+}
 
 export function RedactionTool() {
     const [documentText, setDocumentText] = useState("");
@@ -34,14 +22,76 @@ export function RedactionTool() {
     const [suggestedTerms, setSuggestedTerms] = useState<string[]>([]);
     const [isRedacted, setIsRedacted] = useState(false);
     const [isPending, startTransition] = useTransition();
+    const [isParsing, setIsParsing] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
 
-    const handleFileChange = () => {
-        setDocumentText(sampleText);
-        toast({
-            title: "Document Loaded",
-            description: "A sample document has been loaded for demonstration.",
-        });
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) {
+            return;
+        }
+
+        if (file.type !== 'application/pdf') {
+            toast({
+                variant: 'destructive',
+                title: 'Invalid File Type',
+                description: 'Please upload a PDF file.',
+            });
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+            return;
+        }
+
+        setIsParsing(true);
+        // Reset state for new document
+        setDocumentText("");
+        setSelectedText("");
+        setRedactionTerms([]);
+        setSuggestedTerms([]);
+        setIsRedacted(false);
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const buffer = e.target?.result;
+            if (buffer) {
+                try {
+                    const pdf = await pdfjsLib.getDocument({ data: buffer as ArrayBuffer }).promise;
+                    let fullText = "";
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        const pageText = textContent.items.map(item => 'str' in item ? item.str : '').join(" ");
+                        fullText += pageText + "\n\n";
+                    }
+                    setDocumentText(fullText);
+                    toast({
+                        title: 'PDF Loaded',
+                        description: `"${file.name}" has been loaded successfully.`,
+                    });
+                } catch (error) {
+                    console.error("Failed to parse PDF:", error);
+                    toast({
+                        variant: 'destructive',
+                        title: 'PDF Parsing Error',
+                        description: 'Could not read the content of the PDF file.',
+                    });
+                } finally {
+                    setIsParsing(false);
+                }
+            }
+        };
+        reader.onerror = () => {
+            console.error('FileReader error');
+            toast({
+                variant: 'destructive',
+                title: 'File Read Error',
+                description: 'There was an error reading the file.',
+            });
+            setIsParsing(false);
+        };
+        reader.readAsArrayBuffer(file);
     };
 
     const handleSelection = () => {
@@ -107,16 +157,31 @@ export function RedactionTool() {
         setRedactionTerms([]);
         setSuggestedTerms([]);
         setIsRedacted(false);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = "";
+        }
     };
 
     const highlightedDocument = useMemo(() => {
-        if (!documentText) {
+        if (!documentText && !isParsing) {
             return (
                 <div className="flex items-center justify-center h-full text-center">
                     <div>
                         <FileUp className="mx-auto h-12 w-12 text-muted-foreground" />
                         <h3 className="mt-2 text-sm font-semibold text-foreground">No Document</h3>
                         <p className="mt-1 text-sm text-muted-foreground">Upload a PDF to get started.</p>
+                    </div>
+                </div>
+            );
+        }
+
+        if (isParsing) {
+             return (
+                <div className="flex items-center justify-center h-full text-center">
+                    <div>
+                        <Loader2 className="mx-auto h-12 w-12 text-muted-foreground animate-spin" />
+                        <h3 className="mt-2 text-sm font-semibold text-foreground">Parsing PDF...</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">Please wait while we process your document.</p>
                     </div>
                 </div>
             );
@@ -165,7 +230,7 @@ export function RedactionTool() {
                 })}
             </pre>
         );
-    }, [documentText, redactionTerms, suggestedTerms, isRedacted]);
+    }, [documentText, redactionTerms, suggestedTerms, isRedacted, isParsing]);
 
 
     return (
@@ -186,8 +251,16 @@ export function RedactionTool() {
                 <Card>
                     <CardHeader><CardTitle>Controls</CardTitle></CardHeader>
                     <CardContent className="grid gap-4">
-                        <Button onClick={handleFileChange} disabled={!!documentText}>
-                            <FileUp className="mr-2 h-4 w-4" /> Upload PDF
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileChange}
+                            style={{ display: 'none' }}
+                            accept="application/pdf"
+                        />
+                        <Button onClick={() => fileInputRef.current?.click()} disabled={isParsing || !!documentText}>
+                            {isParsing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
+                            {isParsing ? "Parsing PDF..." : "Upload PDF"}
                         </Button>
                         <Button onClick={handleSuggest} disabled={!documentText || isPending || isRedacted}>
                             {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
