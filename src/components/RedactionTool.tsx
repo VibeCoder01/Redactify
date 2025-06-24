@@ -46,7 +46,6 @@ export function RedactionTool() {
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     
-    const [currentPageAnnotations, setCurrentPageAnnotations] = useState<any[]>([]);
     const [totalAnnotationsCount, setTotalAnnotationsCount] = useState(0);
     const [isHighlightingAnnotations, setIsHighlightingAnnotations] = useState(false);
 
@@ -73,11 +72,9 @@ export function RedactionTool() {
         setTotalAnnotationsCount(count);
     };
 
-    const renderPage = useCallback(async (pageNum: number) => {
+    const renderPage = useCallback(async (pageNum: number, renderAnnotations: boolean) => {
         if (!pdfDocument || !canvasRef.current) return;
         
-        setCurrentPageAnnotations([]);
-
         const page = await pdfDocument.getPage(pageNum);
         const viewport = page.getViewport({ scale: 2.0 });
         setPageViewport(viewport);
@@ -89,33 +86,21 @@ export function RedactionTool() {
         canvas.width = viewport.width;
         
         if (context) {
-            await page.render({ canvasContext: context, viewport }).promise;
+            await page.render({ 
+                canvasContext: context, 
+                viewport,
+                renderAnnotationLayer: renderAnnotations
+            }).promise;
         }
 
-        try {
-            const annotations = await page.getAnnotations();
-            const pageAnnotations = annotations.map(annot => {
-                if (!annot.rect) return null;
-                const [x1, y1, x2, y2] = annot.rect;
-                return {
-                    x: x1,
-                    y: y1,
-                    width: x2 - x1,
-                    height: y2 - y1,
-                };
-            }).filter(Boolean);
-            setCurrentPageAnnotations(pageAnnotations as any[]);
-        } catch (error) {
-            // Silently fail if annotations can't be fetched for a page
-        }
     }, [pdfDocument]);
 
     // This effect handles re-rendering the canvas when the page or redactions change.
     useEffect(() => {
         if (pdfDocument) {
-            renderPage(currentPageNumber);
+            renderPage(currentPageNumber, isHighlightingAnnotations);
         }
-    }, [pdfDocument, currentPageNumber, renderPage]);
+    }, [pdfDocument, currentPageNumber, renderPage, isHighlightingAnnotations]);
 
     // This effect handles resetting pan when the document or page changes.
     useEffect(() => {
@@ -294,7 +279,6 @@ export function RedactionTool() {
         setIsDownloading(null);
         setPanOffset({x: 0, y: 0});
         setTotalAnnotationsCount(0);
-        setCurrentPageAnnotations([]);
         setIsHighlightingAnnotations(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
@@ -335,7 +319,6 @@ export function RedactionTool() {
                 setPdfDocument(pdf);
                 setRedactions([]); // Clear redactions as the underlying doc has changed
                 setTotalAnnotationsCount(0);
-                setCurrentPageAnnotations([]);
                 setCurrentPageNumber(1); // Reset to first page
                 toast({ title: "Annotations Removed", description: `${annotationsRemoved} annotations were removed from the document.` });
             } else {
@@ -626,28 +609,6 @@ export function RedactionTool() {
                                         );
                                     })
                                 }
-                                {isHighlightingAnnotations && pageViewport && canvasRef.current && currentPageAnnotations
-                                    .map((annot, index) => {
-                                        const renderScale = canvasRef.current!.width / pageViewport.width;
-                                        const canvasX = annot.x * renderScale;
-                                        const canvasY = canvasRef.current!.height - (annot.y + annot.height) * renderScale;
-                                        const canvasWidth = annot.width * renderScale;
-                                        const canvasHeight = annot.height * renderScale;
-
-                                        return (
-                                            <div
-                                                key={`annot-${index}`}
-                                                className="absolute bg-accent/30 border-2 border-dashed border-accent pointer-events-none"
-                                                style={{
-                                                    left: canvasX,
-                                                    top: canvasY,
-                                                    width: canvasWidth,
-                                                    height: canvasHeight,
-                                                }}
-                                            />
-                                        );
-                                    })
-                                }
                             </div>
                         </div>
                     )}
@@ -672,7 +633,7 @@ export function RedactionTool() {
                                 <FileUp className="mx-auto h-12 w-12 text-muted-foreground" />
                                 <h3 className="mt-2 text-sm font-semibold text-foreground">Upload a Document</h3>
                                 <p className="mt-1 text-sm text-muted-foreground">Drag & drop or click to upload a PDF.</p>
-                                <p className="mt-4 text-xs text-muted-foreground">Use arrow keys or trackpad to navigate the document.</p>
+
                             </div>
                         ) : null}
                     </div>
@@ -689,3 +650,5 @@ export function RedactionTool() {
         </div>
     );
 }
+
+    
