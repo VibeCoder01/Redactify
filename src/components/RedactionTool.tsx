@@ -3,7 +3,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, PDFName, PDFArray } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -298,13 +298,10 @@ export function RedactionTool() {
             let annotationsRemoved = 0;
     
             for (const page of pages) {
-                const annotations = page.getAnnotations();
-                if (annotations.length > 0) {
-                    annotationsRemoved += annotations.length;
-                    // Create a copy for safe iteration while removing
-                    [...annotations].forEach(annot => {
-                        page.removeAnnotation(annot);
-                    });
+                const annots = page.node.lookup(PDFName.of('Annots'));
+                if (annots instanceof PDFArray) {
+                    annotationsRemoved += annots.size();
+                    page.node.delete(PDFName.of('Annots'));
                 }
             }
             
