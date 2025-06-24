@@ -41,8 +41,7 @@ export function RedactionTool() {
     
     const [currentPageNumber, setCurrentPageNumber] = useState(1);
     const [isDrawing, setIsDrawing] = useState(false);
-    const [drawStartPoint, setDrawStartPoint] = useState<{ x: number, y: number } | null>(null);
-    const [currentDrawing, setCurrentDrawing] = useState<Omit<RedactionArea, "pageIndex"> | null>(null);
+    
     const [hoveredRedactionIndex, setHoveredRedactionIndex] = useState<number | null>(null);
     const [pageViewport, setPageViewport] = useState<pdfjsLib.PageViewport | null>(null);
 
@@ -61,6 +60,12 @@ export function RedactionTool() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
     const viewportRef = useRef<HTMLDivElement>(null);
+    
+    const dragStateRef = useRef<{
+        startPoint: { x: number, y: number } | null;
+        currentRect: { x: number, y: number, width: number, height: number } | null;
+    }>({ startPoint: null, currentRect: null });
+    const [ephemeralRect, setEphemeralRect] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
 
     const { toast } = useToast();
     
@@ -107,14 +112,12 @@ export function RedactionTool() {
             if (isHighlightingAnnotations) {
                 const annotations = await page.getAnnotations();
                 annotations.forEach(annotation => {
-                    // We only care about annotations with a rectangle
                     if (!annotation.rect) {
                         return;
                     }
 
                     const [x1, y1, x2, y2] = annotation.rect;
 
-                    // Convert PDF coordinates to canvas coordinates
                     const p1 = viewport.convertToViewportPoint(x1, y1);
                     const p2 = viewport.convertToViewportPoint(x2, y2);
 
@@ -123,11 +126,9 @@ export function RedactionTool() {
                     const width = Math.abs(p1[0] - p2[0]);
                     const height = Math.abs(p1[1] - p2[1]);
                     
-                    // Draw a semi-transparent box to represent the annotation
                     context.fillStyle = 'hsla(174, 100%, 29%, 0.4)';
                     context.fillRect(canvasX, canvasY, width, height);
 
-                    // Also add a border to make it clearer
                     context.strokeStyle = 'hsl(174, 100%, 29%)';
                     context.lineWidth = 1;
                     context.strokeRect(canvasX, canvasY, width, height);
@@ -143,12 +144,10 @@ export function RedactionTool() {
         }
     }, [pdfDocument, currentPageNumber, renderPage, isHighlightingAnnotations]);
 
-    // This effect handles scrolling to the current annotation and flashing the viewport.
     useEffect(() => {
         if (isHighlightingAnnotations && currentAnnotationIndex > -1 && allAnnotations.length > 0 && pageViewport && viewportRef.current) {
             const annotation = allAnnotations[currentAnnotationIndex];
 
-            // The effect should only fire when the viewport for the annotation's page is ready.
             if (annotation.pageIndex !== currentPageNumber) {
                 return;
             }
@@ -167,12 +166,8 @@ export function RedactionTool() {
             const annotationCenterY = annotationRect.y + (annotationRect.height / 2);
             const viewportHeight = viewportRef.current.clientHeight;
             
-            // We use panOffset for scrolling, so we adjust it to center the annotation.
-            // The goal is: panOffset.y + annotationCenterY = viewportHeight / 2
-            // So, newPanY = viewportHeight / 2 - annotationCenterY
             const newPanY = viewportHeight / 2 - annotationCenterY;
 
-            // Also center horizontally.
             const annotationCenterX = annotationRect.x + (annotationRect.width / 2);
             const viewportWidth = viewportRef.current.clientWidth;
             const newPanX = viewportWidth / 2 - annotationCenterX;
@@ -298,7 +293,7 @@ export function RedactionTool() {
         setIsDraggingOver(false);
     };
 
-    const getMousePos = (e: React.MouseEvent<HTMLDivElement>) => {
+    const getMousePos = (e: React.MouseEvent<HTMLDivElement> | MouseEvent) => {
         if (!canvasRef.current) return {x: 0, y: 0};
         const rect = canvasRef.current.getBoundingClientRect();
         return {
@@ -308,63 +303,65 @@ export function RedactionTool() {
     }
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!canvasRef.current || !pdfDocument) return;
+        if (!canvasRef.current || !pdfDocument || isProcessingAnnotations || !!isDownloading) return;
         e.preventDefault();
         e.stopPropagation();
+        const startPoint = getMousePos(e);
+        dragStateRef.current.startPoint = startPoint;
         setIsDrawing(true);
-        setDrawStartPoint(getMousePos(e));
     };
 
     const handleGlobalMouseMove = useCallback((event: MouseEvent) => {
-        if (!isDrawing || !drawStartPoint || !canvasRef.current) return;
-        const rect = canvasRef.current.getBoundingClientRect();
-        const currentPos = {
-            x: event.clientX - rect.left,
-            y: event.clientY - rect.top
-        };
-        const x = Math.min(drawStartPoint.x, currentPos.x);
-        const y = Math.min(drawStartPoint.y, currentPos.y);
-        const width = Math.abs(currentPos.x - drawStartPoint.x);
-        const height = Math.abs(currentPos.y - drawStartPoint.y);
-        setCurrentDrawing({ x, y, width, height });
-    }, [isDrawing, drawStartPoint]);
+        if (!dragStateRef.current.startPoint || !canvasRef.current) return;
+        
+        const currentPos = getMousePos(event);
+        const startPoint = dragStateRef.current.startPoint;
+
+        const x = Math.min(startPoint.x, currentPos.x);
+        const y = Math.min(startPoint.y, currentPos.y);
+        const width = Math.abs(currentPos.x - startPoint.x);
+        const height = Math.abs(currentPos.y - startPoint.y);
+        
+        const newRect = { x, y, width, height };
+        dragStateRef.current.currentRect = newRect;
+        setEphemeralRect(newRect);
+    }, []);
 
     const handleGlobalMouseUp = useCallback(() => {
-        if (!isDrawing) return;
+        setIsDrawing(false);
+
+        const currentDrawing = dragStateRef.current.currentRect;
 
         if (currentDrawing && pdfDocument && canvasRef.current && pageViewport) {
-            const renderScale = canvasRef.current.width / pageViewport.width;
-            const pdfCoords = {
-                x: currentDrawing.x / renderScale,
-                y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / renderScale,
-                width: currentDrawing.width / renderScale,
-                height: currentDrawing.height / renderScale
-            };
-
-            // Only add redaction if it has some area
-            if (pdfCoords.width > 0 && pdfCoords.height > 0) {
-                 setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
+            if (currentDrawing.width > 0 && currentDrawing.height > 0) {
+                const renderScale = canvasRef.current.width / pageViewport.width;
+                const pdfCoords = {
+                    x: currentDrawing.x / renderScale,
+                    y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / renderScale,
+                    width: currentDrawing.width / renderScale,
+                    height: currentDrawing.height / renderScale
+                };
+                setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
             }
         }
         
-        setIsDrawing(false);
-        setDrawStartPoint(null);
-        setCurrentDrawing(null);
-        viewportRef.current?.focus();
-    }, [isDrawing, currentDrawing, pdfDocument, pageViewport, currentPageNumber]);
+        dragStateRef.current.startPoint = null;
+        dragStateRef.current.currentRect = null;
+        setEphemeralRect(null);
+        
+        if (viewportRef.current) {
+            viewportRef.current.focus();
+        }
+    }, [pdfDocument, pageViewport, currentPageNumber]);
     
     useEffect(() => {
         if (isDrawing) {
-            window.addEventListener('mousemove', handleGlobalMouseMove);
-            window.addEventListener('mouseup', handleGlobalMouseUp);
-        } else {
-            window.removeEventListener('mousemove', handleGlobalMouseMove);
-            window.removeEventListener('mouseup', handleGlobalMouseUp);
+            document.addEventListener('mousemove', handleGlobalMouseMove);
+            document.addEventListener('mouseup', handleGlobalMouseUp);
         }
-
         return () => {
-            window.removeEventListener('mousemove', handleGlobalMouseMove);
-            window.removeEventListener('mouseup', handleGlobalMouseUp);
+            document.removeEventListener('mousemove', handleGlobalMouseMove);
+            document.removeEventListener('mouseup', handleGlobalMouseUp);
         };
     }, [isDrawing, handleGlobalMouseMove, handleGlobalMouseUp]);
 
@@ -714,18 +711,19 @@ export function RedactionTool() {
                                 onMouseDown={handleMouseDown}
                             >
                                 <canvas ref={canvasRef} />
-
-                                {isDrawing && currentDrawing && (
+                                
+                                {ephemeralRect && (
                                     <div
                                         className="absolute border-2 border-dashed border-primary bg-primary/20 pointer-events-none"
                                         style={{
-                                            left: currentDrawing.x,
-                                            top: currentDrawing.y,
-                                            width: currentDrawing.width,
-                                            height: currentDrawing.height,
+                                            left: ephemeralRect.x,
+                                            top: ephemeralRect.y,
+                                            width: ephemeralRect.width,
+                                            height: ephemeralRect.height,
                                         }}
                                     />
                                 )}
+
                                 {pageViewport && canvasRef.current && redactions
                                     .filter(r => r.pageIndex === currentPageNumber - 1)
                                     .map((r, index) => {
