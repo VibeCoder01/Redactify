@@ -26,6 +26,12 @@ interface RedactionArea {
     height: number;
 }
 
+interface AnnotationInfo {
+    pageIndex: number;
+    rect: [number, number, number, number];
+    id?: string;
+}
+
 const PAN_SPEED = 50;
 
 export function RedactionTool() {
@@ -46,9 +52,8 @@ export function RedactionTool() {
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     
-    const [totalAnnotationsCount, setTotalAnnotationsCount] = useState(0);
+    const [allAnnotations, setAllAnnotations] = useState<AnnotationInfo[]>([]);
     const [isHighlightingAnnotations, setIsHighlightingAnnotations] = useState(false);
-    const [annotationPages, setAnnotationPages] = useState<number[]>([]);
     const [currentAnnotationIndex, setCurrentAnnotationIndex] = useState(-1);
     const [isFlashing, setIsFlashing] = useState(false);
 
@@ -62,22 +67,23 @@ export function RedactionTool() {
     const totalPages = pdfDocument?.numPages ?? 0;
 
     const scanForAnnotations = async (pdf: pdfjsLib.PDFDocumentProxy) => {
-        let count = 0;
-        const pagesWithAnnotations: number[] = [];
+        const annotationsList: AnnotationInfo[] = [];
         for (let i = 1; i <= pdf.numPages; i++) {
             try {
                 const page = await pdf.getPage(i);
                 const annotations = await page.getAnnotations();
-                if (annotations.length > 0) {
-                    count += annotations.length;
-                    pagesWithAnnotations.push(i);
-                }
+                annotations.forEach((annot) => {
+                    annotationsList.push({
+                        pageIndex: i, // pdf.js page numbers are 1-based
+                        rect: annot.rect,
+                        id: annot.id,
+                    });
+                });
             } catch (error) {
-                // Silently fail if annotations can't be fetched
+                // Silently fail
             }
         }
-        setTotalAnnotationsCount(count);
-        setAnnotationPages(pagesWithAnnotations);
+        setAllAnnotations(annotationsList);
     };
 
     const renderPage = useCallback(async (pageNum: number, renderAnnotations: boolean) => {
@@ -284,9 +290,8 @@ export function RedactionTool() {
         setCurrentPageNumber(1);
         setIsDownloading(null);
         setPanOffset({x: 0, y: 0});
-        setTotalAnnotationsCount(0);
+        setAllAnnotations([]);
         setIsHighlightingAnnotations(false);
-        setAnnotationPages([]);
         setCurrentAnnotationIndex(-1);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
@@ -325,10 +330,10 @@ export function RedactionTool() {
                 const pdf = await pdfjsLib.getDocument({ data: modifiedPdfBytes.slice(0) }).promise;
                 setPdfDocument(pdf);
                 setRedactions([]);
-                setTotalAnnotationsCount(0);
-                setAnnotationPages([]);
+                setAllAnnotations([]);
                 setCurrentAnnotationIndex(-1);
                 setCurrentPageNumber(1);
+                await scanForAnnotations(pdf);
                 toast({ title: "Annotations Removed", description: `${annotationsRemoved} annotations were removed from the document.` });
             } else {
                 toast({ title: "No Annotations Found", description: "No removable annotations were found in the document." });
@@ -352,13 +357,14 @@ export function RedactionTool() {
     
     const handleHighlightToggle = async (checked: boolean) => {
         setIsHighlightingAnnotations(checked);
-        if (checked && annotationPages.length > 0) {
+        if (checked && allAnnotations.length > 0) {
             setCurrentAnnotationIndex(0);
-            setCurrentPageNumber(annotationPages[0]);
+            const firstAnnotation = allAnnotations[0];
+            setCurrentPageNumber(firstAnnotation.pageIndex);
             triggerFlash();
             toast({
                 title: "Navigated to Annotation",
-                description: `Moved to page ${annotationPages[0]} to show the first annotation.`,
+                description: `Moved to page ${firstAnnotation.pageIndex} to show the first annotation.`,
             });
         } else if (!checked) {
             setCurrentAnnotationIndex(-1);
@@ -366,18 +372,20 @@ export function RedactionTool() {
     };
 
     const handleNextAnnotation = () => {
-        if (annotationPages.length === 0) return;
-        const nextIndex = (currentAnnotationIndex + 1) % annotationPages.length;
+        if (allAnnotations.length === 0) return;
+        const nextIndex = (currentAnnotationIndex + 1) % allAnnotations.length;
         setCurrentAnnotationIndex(nextIndex);
-        setCurrentPageNumber(annotationPages[nextIndex]);
+        const nextAnnotation = allAnnotations[nextIndex];
+        setCurrentPageNumber(nextAnnotation.pageIndex);
         triggerFlash();
     };
 
     const handlePrevAnnotation = () => {
-        if (annotationPages.length === 0) return;
-        const prevIndex = (currentAnnotationIndex - 1 + annotationPages.length) % annotationPages.length;
+        if (allAnnotations.length === 0) return;
+        const prevIndex = (currentAnnotationIndex - 1 + allAnnotations.length) % allAnnotations.length;
         setCurrentAnnotationIndex(prevIndex);
-        setCurrentPageNumber(annotationPages[prevIndex]);
+        const prevAnnotation = allAnnotations[prevIndex];
+        setCurrentPageNumber(prevAnnotation.pageIndex);
         triggerFlash();
     };
 
@@ -526,27 +534,27 @@ export function RedactionTool() {
                                 <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0 || !!isDownloading || isProcessingAnnotations}>
                                     <Eraser className="mr-2 h-4 w-4"/> Clear All
                                 </Button>
-                                {totalAnnotationsCount > 0 && (
+                                {allAnnotations.length > 0 && (
                                     <div className="flex items-center gap-2 border-l pl-4">
                                         <Switch
                                             id="highlight-annotations"
                                             checked={isHighlightingAnnotations}
                                             onCheckedChange={handleHighlightToggle}
-                                            disabled={totalAnnotationsCount === 0}
+                                            disabled={allAnnotations.length === 0}
                                             aria-label="Highlight annotations"
                                         />
                                         <Label htmlFor="highlight-annotations" className="text-sm text-muted-foreground cursor-pointer">
                                             Highlight Annotations
                                         </Label>
-                                        {isHighlightingAnnotations && annotationPages.length > 0 && (
+                                        {isHighlightingAnnotations && allAnnotations.length > 0 && (
                                             <div className="flex items-center gap-1">
-                                                <Button variant="outline" size="icon" onClick={handlePrevAnnotation} disabled={annotationPages.length <= 1}>
+                                                <Button variant="outline" size="icon" onClick={handlePrevAnnotation} disabled={allAnnotations.length <= 1}>
                                                     <ChevronLeft className="h-4 w-4" />
                                                 </Button>
                                                 <span className="text-sm text-muted-foreground w-20 text-center">
-                                                    {currentAnnotationIndex + 1} of {annotationPages.length}
+                                                    {currentAnnotationIndex + 1} of {allAnnotations.length}
                                                 </span>
-                                                <Button variant="outline" size="icon" onClick={handleNextAnnotation} disabled={annotationPages.length <= 1}>
+                                                <Button variant="outline" size="icon" onClick={handleNextAnnotation} disabled={allAnnotations.length <= 1}>
                                                     <ChevronRight className="h-4 w-4" />
                                                 </Button>
                                             </div>
@@ -559,15 +567,15 @@ export function RedactionTool() {
                                             <Button
                                                 variant="outline"
                                                 onClick={handleRemoveAnnotations}
-                                                disabled={isProcessingAnnotations || !!isDownloading || totalAnnotationsCount === 0}
+                                                disabled={isProcessingAnnotations || !!isDownloading || allAnnotations.length === 0}
                                             >
                                                 {isProcessingAnnotations ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4" />}
                                                 Remove Annotations
                                             </Button>
                                         </TooltipTrigger>
-                                        {totalAnnotationsCount > 0 && (
+                                        {allAnnotations.length > 0 && (
                                             <TooltipContent>
-                                                <p>Removes {totalAnnotationsCount} annotation {totalAnnotationsCount === 1 ? 'object' : 'objects'}.</p>
+                                                <p>Removes {allAnnotations.length} annotation {allAnnotations.length === 1 ? 'object' : 'objects'}.</p>
                                             </TooltipContent>
                                         )}
                                     </Tooltip>
@@ -668,6 +676,31 @@ export function RedactionTool() {
                                         );
                                     })
                                 }
+                                {isHighlightingAnnotations && currentAnnotationIndex > -1 && allAnnotations.length > 0 && pageViewport && canvasRef.current && (() => {
+                                        const annotation = allAnnotations[currentAnnotationIndex];
+                                        if (annotation.pageIndex !== currentPageNumber) return null;
+
+                                        const [x1, y1, x2, y2] = annotation.rect;
+                                        const rect = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+
+                                        const renderScale = canvasRef.current!.width / pageViewport.width;
+                                        const canvasX = rect.x * renderScale;
+                                        const canvasY = canvasRef.current!.height - (rect.y + rect.height) * renderScale;
+                                        const canvasWidth = rect.width * renderScale;
+                                        const canvasHeight = rect.height * renderScale;
+
+                                        return (
+                                            <div
+                                                className="absolute border-2 border-dashed border-accent pointer-events-none"
+                                                style={{
+                                                    left: canvasX,
+                                                    top: canvasY,
+                                                    width: canvasWidth,
+                                                    height: canvasHeight,
+                                                }}
+                                            />
+                                        );
+                                    })()}
                             </div>
                         </div>
                     )}
