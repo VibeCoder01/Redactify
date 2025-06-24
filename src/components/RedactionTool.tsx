@@ -143,6 +143,45 @@ export function RedactionTool() {
         }
     }, [pdfDocument, currentPageNumber, renderPage, isHighlightingAnnotations]);
 
+    // This effect handles scrolling to the current annotation and flashing the viewport.
+    useEffect(() => {
+        if (isHighlightingAnnotations && currentAnnotationIndex > -1 && allAnnotations.length > 0 && pageViewport && viewportRef.current) {
+            const annotation = allAnnotations[currentAnnotationIndex];
+
+            // The effect should only fire when the viewport for the annotation's page is ready.
+            if (annotation.pageIndex !== currentPageNumber) {
+                return;
+            }
+
+            const [x1, y1, x2, y2] = annotation.rect;
+            const p1 = pageViewport.convertToViewportPoint(x1, y1);
+            const p2 = pageViewport.convertToViewportPoint(x2, y2);
+            
+            const annotationRect = {
+                x: Math.min(p1[0], p2[0]),
+                y: Math.min(p1[1], p2[1]),
+                width: Math.abs(p1[0] - p2[0]),
+                height: Math.abs(p1[1] - p2[1]),
+            };
+            
+            const annotationCenterY = annotationRect.y + (annotationRect.height / 2);
+            const viewportHeight = viewportRef.current.clientHeight;
+            
+            // We use panOffset for scrolling, so we adjust it to center the annotation.
+            // The goal is: panOffset.y + annotationCenterY = viewportHeight / 2
+            // So, newPanY = viewportHeight / 2 - annotationCenterY
+            const newPanY = viewportHeight / 2 - annotationCenterY;
+
+            // Also center horizontally.
+            const annotationCenterX = annotationRect.x + (annotationRect.width / 2);
+            const viewportWidth = viewportRef.current.clientWidth;
+            const newPanX = viewportWidth / 2 - annotationCenterX;
+
+            setPanOffset({ x: newPanX, y: newPanY });
+            triggerFlash();
+        }
+    }, [isHighlightingAnnotations, currentAnnotationIndex, allAnnotations, pageViewport, currentPageNumber]);
+
     useEffect(() => {
         if (pdfDocument) {
             setPanOffset({ x: 0, y: 0 });
@@ -389,7 +428,6 @@ export function RedactionTool() {
             setCurrentAnnotationIndex(0);
             const firstAnnotation = allAnnotations[0];
             setCurrentPageNumber(firstAnnotation.pageIndex);
-            triggerFlash();
             toast({
                 title: "Navigated to Annotation",
                 description: `Moved to page ${firstAnnotation.pageIndex} to show the first annotation.`,
@@ -402,19 +440,17 @@ export function RedactionTool() {
     const handleNextAnnotation = () => {
         if (allAnnotations.length === 0) return;
         const nextIndex = (currentAnnotationIndex + 1) % allAnnotations.length;
-        setCurrentAnnotationIndex(nextIndex);
         const nextAnnotation = allAnnotations[nextIndex];
+        setCurrentAnnotationIndex(nextIndex);
         setCurrentPageNumber(nextAnnotation.pageIndex);
-        triggerFlash();
     };
 
     const handlePrevAnnotation = () => {
         if (allAnnotations.length === 0) return;
         const prevIndex = (currentAnnotationIndex - 1 + allAnnotations.length) % allAnnotations.length;
-        setCurrentAnnotationIndex(prevIndex);
         const prevAnnotation = allAnnotations[prevIndex];
+        setCurrentAnnotationIndex(prevIndex);
         setCurrentPageNumber(prevAnnotation.pageIndex);
-        triggerFlash();
     };
 
     const applyRedactionsToPdf = async (pdfDoc: PDFDocument) => {
