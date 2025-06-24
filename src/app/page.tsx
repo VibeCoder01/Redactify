@@ -1,5 +1,18 @@
 import { Header } from "@/components/Header";
-import { RedactionTool } from "@/components/RedactionTool";
+import dynamic from 'next/dynamic';
+import { Skeleton } from "@/components/ui/skeleton";
+
+const RedactionToolLoading = () => (
+    <div className="flex flex-col gap-6">
+        <Skeleton className="h-16 w-full rounded-lg" />
+        <Skeleton className="h-[70vh] w-full rounded-lg" />
+    </div>
+);
+
+const RedactionTool = dynamic(() => import('@/components/RedactionTool').then(mod => mod.RedactionTool), {
+  ssr: false,
+  loading: () => <RedactionToolLoading />,
+});
 
 export default function Home() {
   return (
