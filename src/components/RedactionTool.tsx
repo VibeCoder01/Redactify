@@ -59,7 +59,6 @@ export function RedactionTool() {
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const annotationLayerRef = useRef<HTMLDivElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
     const viewportRef = useRef<HTMLDivElement>(null);
 
@@ -88,7 +87,7 @@ export function RedactionTool() {
     };
 
     const renderPage = useCallback(async (pageNum: number) => {
-        if (!pdfDocument || !canvasRef.current || !annotationLayerRef.current) return;
+        if (!pdfDocument || !canvasRef.current) return;
     
         const page = await pdfDocument.getPage(pageNum);
         const viewport = page.getViewport({ scale: 2.0 });
@@ -96,31 +95,44 @@ export function RedactionTool() {
     
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
-        const annotationLayerDiv = annotationLayerRef.current;
         
-        // Clear previous annotation layer
-        annotationLayerDiv.innerHTML = '';
-    
         canvas.height = viewport.height;
         canvas.width = viewport.width;
     
-        annotationLayerDiv.style.width = `${viewport.width}px`;
-        annotationLayerDiv.style.height = `${viewport.height}px`;
-    
         if (context) {
+            // Render the PDF page first
             await page.render({ canvasContext: context, viewport }).promise;
-        }
     
-        if (isHighlightingAnnotations) {
-            const annotations = await page.getAnnotations();
-            
-            // Use the official PDF.js annotation layer builder to render annotations in a separate div
-            pdfjsLib.AnnotationLayer.render({
-                viewport: viewport.clone({ dontFlip: true }),
-                div: annotationLayerDiv,
-                annotations: annotations,
-                page: page,
-            });
+            // If highlighting is enabled, draw annotations on top
+            if (isHighlightingAnnotations) {
+                const annotations = await page.getAnnotations();
+                annotations.forEach(annotation => {
+                    // We only care about annotations with a rectangle
+                    if (!annotation.rect) {
+                        return;
+                    }
+
+                    const [x1, y1, x2, y2] = annotation.rect;
+
+                    // Convert PDF coordinates to canvas coordinates
+                    const p1 = viewport.convertToViewportPoint(x1, y1);
+                    const p2 = viewport.convertToViewportPoint(x2, y2);
+
+                    const canvasX = Math.min(p1[0], p2[0]);
+                    const canvasY = Math.min(p1[1], p2[1]);
+                    const width = Math.abs(p1[0] - p2[0]);
+                    const height = Math.abs(p1[1] - p2[1]);
+                    
+                    // Draw a semi-transparent box to represent the annotation
+                    context.fillStyle = 'hsla(174, 100%, 29%, 0.4)';
+                    context.fillRect(canvasX, canvasY, width, height);
+
+                    // Also add a border to make it clearer
+                    context.strokeStyle = 'hsl(174, 100%, 29%)';
+                    context.lineWidth = 1;
+                    context.strokeRect(canvasX, canvasY, width, height);
+                });
+            }
         }
     
     }, [pdfDocument, isHighlightingAnnotations]);
@@ -648,7 +660,6 @@ export function RedactionTool() {
                                 onMouseLeave={() => { if(isDrawing) handleMouseUp;}}
                             >
                                 <canvas ref={canvasRef} />
-                                <div ref={annotationLayerRef} className="absolute top-0 left-0" />
 
                                 {isDrawing && currentDrawing && (
                                     <div
