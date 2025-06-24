@@ -296,9 +296,12 @@ export function RedactionTool() {
                 toast({ title: "No Layers Found", description: "No removable annotations were found in the document." });
             }
     
-        } catch (error) {
-            console.error("Failed to remove layers:", error);
-            toast({ variant: 'destructive', title: 'Processing Error', description: 'Could not remove layers from the PDF.' });
+        } catch (error: any) {
+            if (error.constructor.name === 'EncryptedPDFError') {
+                toast({ variant: 'destructive', title: 'Encrypted PDF', description: 'This document is encrypted and cannot be modified.' });
+            } else {
+                toast({ variant: 'destructive', title: 'Processing Error', description: 'Could not remove layers from the PDF.' });
+            }
         } finally {
             setIsProcessingLayers(false);
         }
@@ -328,9 +331,12 @@ export function RedactionTool() {
             const pdfBytes = await pdfDoc.save();
             downloadPdf(pdfBytes, 'redacted-document-recoverable.pdf');
             toast({ title: "Download Ready", description: "The recoverable PDF has been downloaded." });
-        } catch (error) {
-            console.error("Failed to create recoverable redacted PDF:", error);
-            toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the recoverable PDF.' });
+        } catch (error: any) {
+            if (error.constructor.name === 'EncryptedPDFError') {
+                toast({ variant: 'destructive', title: 'Encrypted PDF', description: 'This document is encrypted and cannot be modified.' });
+            } else {
+                toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the recoverable PDF.' });
+            }
         } finally {
             setIsDownloading(null);
         }
@@ -393,7 +399,6 @@ export function RedactionTool() {
             downloadPdf(pdfBytes, 'redacted-document-secure.pdf');
             toast({ title: "Download Ready", description: "Your securely redacted PDF has been downloaded." });
         } catch (error) {
-            console.error("Failed to create secure redacted PDF:", error);
             toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the secure PDF.' });
         } finally {
             setIsDownloading(null);
