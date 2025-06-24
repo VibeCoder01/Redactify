@@ -328,7 +328,7 @@ export function RedactionTool() {
         setCurrentDrawing({ x, y, width, height });
     };
 
-    const handleMouseUp = async (e: React.MouseEvent<HTMLDivElement>) => {
+    const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current || !pageViewport) return;
         e.preventDefault();
         e.stopPropagation();
@@ -693,7 +693,7 @@ export function RedactionTool() {
                                 onMouseDown={handleMouseDown}
                                 onMouseMove={handleMouseMove}
                                 onMouseUp={handleMouseUp}
-                                onMouseLeave={() => { if(isDrawing) handleMouseUp;}}
+                                onMouseLeave={handleMouseUp}
                             >
                                 <canvas ref={canvasRef} />
 
@@ -746,13 +746,14 @@ export function RedactionTool() {
                                         if (annotation.pageIndex !== currentPageNumber) return null;
 
                                         const [x1, y1, x2, y2] = annotation.rect;
-                                        const rect = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+                                        
+                                        const p1 = pageViewport.convertToViewportPoint(x1, y1);
+                                        const p2 = pageViewport.convertToViewportPoint(x2, y2);
 
-                                        const renderScale = canvasRef.current!.width / pageViewport.width;
-                                        const canvasX = rect.x * renderScale;
-                                        const canvasY = canvasRef.current!.height - (rect.y + rect.height) * renderScale;
-                                        const canvasWidth = rect.width * renderScale;
-                                        const canvasHeight = rect.height * renderScale;
+                                        const canvasX = Math.min(p1[0], p2[0]);
+                                        const canvasY = Math.min(p1[1], p2[1]);
+                                        const canvasWidth = Math.abs(p2[0] - p1[0]);
+                                        const canvasHeight = Math.abs(p2[1] - p1[1]);
 
                                         return (
                                             <div
@@ -806,4 +807,5 @@ export function RedactionTool() {
             />
         </div>
     );
-}
+
+    
