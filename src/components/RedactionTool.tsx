@@ -336,6 +336,36 @@ export function RedactionTool() {
         }
     };
     
+    const findFirstAnnotationPage = async (): Promise<number | null> => {
+        if (!pdfDocument) return null;
+        for (let i = 1; i <= pdfDocument.numPages; i++) {
+            try {
+                const page = await pdfDocument.getPage(i);
+                const annotations = await page.getAnnotations();
+                if (annotations.length > 0) {
+                    return i; // Page numbers are 1-based
+                }
+            } catch (error) {
+                // Silently fail if annotations can't be fetched
+            }
+        }
+        return null;
+    };
+    
+    const handleHighlightToggle = async (checked: boolean) => {
+        setIsHighlightingAnnotations(checked);
+        if (checked && pdfDocument) {
+            const firstPage = await findFirstAnnotationPage();
+            if (firstPage) {
+                setCurrentPageNumber(firstPage);
+                toast({
+                    title: "Navigated to Annotation",
+                    description: `Moved to page ${firstPage} to show the first annotation.`,
+                });
+            }
+        }
+    };
+
     const applyRedactionsToPdf = async (pdfDoc: PDFDocument) => {
         const pages = pdfDoc.getPages();
         redactions.forEach(r => {
@@ -486,7 +516,7 @@ export function RedactionTool() {
                                         <Switch
                                             id="highlight-annotations"
                                             checked={isHighlightingAnnotations}
-                                            onCheckedChange={setIsHighlightingAnnotations}
+                                            onCheckedChange={handleHighlightToggle}
                                             disabled={totalAnnotationsCount === 0}
                                             aria-label="Highlight annotations"
                                         />
