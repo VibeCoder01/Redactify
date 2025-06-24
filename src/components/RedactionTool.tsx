@@ -34,6 +34,8 @@ export function RedactionTool() {
     const [isDrawing, setIsDrawing] = useState(false);
     const [drawStartPoint, setDrawStartPoint] = useState<{ x: number, y: number } | null>(null);
     const [currentDrawing, setCurrentDrawing] = useState<Omit<RedactionArea, "pageIndex"> | null>(null);
+    const [hoveredRedactionIndex, setHoveredRedactionIndex] = useState<number | null>(null);
+    const [pageViewport, setPageViewport] = useState<pdfjsLib.PageViewport | null>(null);
 
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isParsing, setIsParsing] = useState(false);
@@ -55,6 +57,8 @@ export function RedactionTool() {
         
         const page = await pdfDocument.getPage(pageNum);
         const viewport = page.getViewport({ scale: 2.0 });
+        setPageViewport(viewport);
+
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
         
@@ -63,29 +67,15 @@ export function RedactionTool() {
         
         if (context) {
             await page.render({ canvasContext: context, viewport }).promise;
-
-            context.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            redactions
-                .filter(r => r.pageIndex === pageNum - 1)
-                .forEach(r => {
-                    const pageViewport = page.getViewport({ scale: 1.0 });
-                    const renderScale = canvas.width / pageViewport.width;
-
-                    const canvasX = r.x * renderScale;
-                    const canvasY = canvas.height - (r.y + r.height) * renderScale;
-                    const canvasWidth = r.width * renderScale;
-                    const canvasHeight = r.height * renderScale;
-                    context.fillRect(canvasX, canvasY, canvasWidth, canvasHeight);
-                });
         }
-    }, [pdfDocument, redactions]);
+    }, [pdfDocument]);
 
     // This effect handles re-rendering the canvas when the page or redactions change.
     useEffect(() => {
         if (pdfDocument) {
             renderPage(currentPageNumber);
         }
-    }, [pdfDocument, currentPageNumber, renderPage, redactions]);
+    }, [pdfDocument, currentPageNumber, renderPage]);
 
     // This effect handles resetting pan when the document or page changes.
     useEffect(() => {
@@ -249,13 +239,10 @@ export function RedactionTool() {
     };
 
     const handleMouseUp = async (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current) return;
+        if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current || !pageViewport) return;
         e.preventDefault();
         e.stopPropagation();
         
-        const page = await pdfDocument.getPage(currentPageNumber);
-        
-        const pageViewport = page.getViewport({ scale: 1.0 });
         const renderScale = canvasRef.current.width / pageViewport.width;
 
         const pdfCoords = {
@@ -286,6 +273,11 @@ export function RedactionTool() {
     const handleUndo = () => {
         setRedactions(prev => prev.slice(0, -1));
         viewportRef.current?.focus();
+    };
+    
+    const handleRemoveSingleRedaction = (e: React.MouseEvent, indexToRemove: number) => {
+        e.preventDefault();
+        setRedactions(prev => prev.filter((_, i) => i !== indexToRemove));
     };
 
     const handleRemoveLayers = async () => {
@@ -450,6 +442,11 @@ export function RedactionTool() {
                                         <ChevronRight className="h-4 w-4" />
                                     </Button>
                                 </div>
+                                {redactions.length > 0 && (
+                                    <div className="flex items-center gap-2 text-sm text-muted-foreground border-l pl-4">
+                                        <span>{redactions.length} {redactions.length === 1 ? 'object' : 'objects'}</span>
+                                    </div>
+                                )}
                                 <p className="text-sm text-muted-foreground hidden md:block">Click and drag to redact. Use arrow keys or trackpad to navigate.</p>
                             </div>
                         ) : (
@@ -517,7 +514,7 @@ export function RedactionTool() {
                                 onMouseDown={handleMouseDown}
                                 onMouseMove={handleMouseMove}
                                 onMouseUp={handleMouseUp}
-                                onMouseLeave={handleMouseUp}
+                                onMouseLeave={() => { if(isDrawing) handleMouseUp;}}
                             >
                                 <canvas ref={canvasRef} />
                                 {isDrawing && currentDrawing && (
@@ -531,6 +528,39 @@ export function RedactionTool() {
                                         }}
                                     />
                                 )}
+                                {pageViewport && canvasRef.current && redactions
+                                    .filter(r => r.pageIndex === currentPageNumber - 1)
+                                    .map((r, index) => {
+                                        const renderScale = canvasRef.current!.width / pageViewport.width;
+
+                                        const canvasX = r.x * renderScale;
+                                        const canvasY = canvasRef.current!.height - (r.y + r.height) * renderScale;
+                                        const canvasWidth = r.width * renderScale;
+                                        const canvasHeight = r.height * renderScale;
+
+                                        return (
+                                            <div
+                                                key={index}
+                                                onMouseEnter={() => setHoveredRedactionIndex(index)}
+                                                onMouseLeave={() => setHoveredRedactionIndex(null)}
+                                                onContextMenu={(e) => handleRemoveSingleRedaction(e, index)}
+                                                className={cn(
+                                                    "absolute bg-black/70 cursor-pointer",
+                                                    "transition-all duration-150",
+                                                    {
+                                                        "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg": hoveredRedactionIndex === index
+                                                    }
+                                                )}
+                                                style={{
+                                                    left: canvasX,
+                                                    top: canvasY,
+                                                    width: canvasWidth,
+                                                    height: canvasHeight,
+                                                }}
+                                            />
+                                        );
+                                    })
+                                }
                             </div>
                         </div>
                     )}
