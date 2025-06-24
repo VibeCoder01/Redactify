@@ -150,7 +150,6 @@ export function RedactionTool() {
                     setCurrentPageNumber(1);
                     toast({ title: 'PDF Loaded', description: `"${file.name}" has been loaded successfully.` });
                 } catch (error: any) {
-                    console.error("Failed to parse PDF:", error);
                     if (error.name === 'PasswordException') {
                         toast({ variant: 'destructive', title: 'Encrypted PDF', description: 'This document is password-protected and cannot be loaded.' });
                     } else {
@@ -163,7 +162,6 @@ export function RedactionTool() {
             }
         };
         reader.onerror = () => {
-            console.error('FileReader error');
             toast({ variant: 'destructive', title: 'File Read Error', description: 'There was an error reading the file.' });
             setIsParsing(false);
         };
