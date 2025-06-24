@@ -11,6 +11,8 @@ import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser, U
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 if (typeof window !== 'undefined') {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -40,13 +42,13 @@ export function RedactionTool() {
 
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isParsing, setIsParsing] = useState(false);
-    const [isProcessingLayers, setIsProcessingLayers] = useState(false);
+    const [isProcessingAnnotations, setIsProcessingAnnotations] = useState(false);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     
     const [currentPageAnnotations, setCurrentPageAnnotations] = useState<any[]>([]);
     const [totalAnnotationsCount, setTotalAnnotationsCount] = useState(0);
-    const [isHighlightingLayers, setIsHighlightingLayers] = useState(false);
+    const [isHighlightingAnnotations, setIsHighlightingAnnotations] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,7 +67,7 @@ export function RedactionTool() {
                 const annotations = await page.getAnnotations();
                 count += annotations.length;
             } catch (error) {
-                console.error(`Could not get annotations for page ${i}:`, error);
+                // Silently fail if annotations can't be fetched
             }
         }
         setTotalAnnotationsCount(count);
@@ -104,7 +106,7 @@ export function RedactionTool() {
             }).filter(Boolean);
             setCurrentPageAnnotations(pageAnnotations as any[]);
         } catch (error) {
-            console.error(`Could not get annotations for page ${pageNum}:`, error);
+            // Silently fail if annotations can't be fetched for a page
         }
     }, [pdfDocument]);
 
@@ -181,9 +183,9 @@ export function RedactionTool() {
             const buffer = e.target?.result as ArrayBuffer;
             if (buffer) {
                 try {
-                    setOriginalPdf(buffer);
                     const bufferForParsing = buffer.slice(0);
                     const pdf = await pdfjsLib.getDocument({ data: bufferForParsing }).promise;
+                    setOriginalPdf(buffer);
                     setPdfDocument(pdf);
                     setCurrentPageNumber(1);
                     await scanTotalAnnotations(pdf);
@@ -293,7 +295,7 @@ export function RedactionTool() {
         setPanOffset({x: 0, y: 0});
         setTotalAnnotationsCount(0);
         setCurrentPageAnnotations([]);
-        setIsHighlightingLayers(false);
+        setIsHighlightingAnnotations(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
@@ -307,10 +309,10 @@ export function RedactionTool() {
         setRedactions(prev => prev.filter((_, i) => i !== indexToRemove));
     };
 
-    const handleRemoveLayers = async () => {
+    const handleRemoveAnnotations = async () => {
         if (!originalPdf) return;
     
-        setIsProcessingLayers(true);
+        setIsProcessingAnnotations(true);
         try {
             const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
             const pages = pdfDoc.getPages();
@@ -335,19 +337,19 @@ export function RedactionTool() {
                 setTotalAnnotationsCount(0);
                 setCurrentPageAnnotations([]);
                 setCurrentPageNumber(1); // Reset to first page
-                toast({ title: "Layers Removed", description: `${annotationsRemoved} annotations were removed from the document.` });
+                toast({ title: "Annotations Removed", description: `${annotationsRemoved} annotations were removed from the document.` });
             } else {
-                toast({ title: "No Layers Found", description: "No removable annotations were found in the document." });
+                toast({ title: "No Annotations Found", description: "No removable annotations were found in the document." });
             }
     
         } catch (error: any) {
             if (error.constructor.name === 'EncryptedPDFError') {
                 toast({ variant: 'destructive', title: 'Encrypted PDF', description: 'This document is encrypted and cannot be modified.' });
             } else {
-                toast({ variant: 'destructive', title: 'Processing Error', description: 'Could not remove layers from the PDF.' });
+                toast({ variant: 'destructive', title: 'Processing Error', description: 'Could not remove annotations from the PDF.' });
             }
         } finally {
-            setIsProcessingLayers(false);
+            setIsProcessingAnnotations(false);
         }
     };
     
@@ -490,24 +492,36 @@ export function RedactionTool() {
                     <div className="flex flex-wrap items-center gap-2">
                         {pdfDocument && (
                             <>
-                                <Button variant="outline" onClick={handleUndo} disabled={redactions.length === 0 || !!isDownloading || isProcessingLayers}>
+                                <Button variant="outline" onClick={handleUndo} disabled={redactions.length === 0 || !!isDownloading || isProcessingAnnotations}>
                                     <Undo2 className="mr-2 h-4 w-4"/> Undo
                                 </Button>
-                                <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0 || !!isDownloading || isProcessingLayers}>
+                                <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0 || !!isDownloading || isProcessingAnnotations}>
                                     <Eraser className="mr-2 h-4 w-4"/> Clear All
                                 </Button>
+                                {totalAnnotationsCount > 0 && (
+                                    <div className="flex items-center gap-2 border-l pl-4">
+                                        <Switch
+                                            id="highlight-annotations"
+                                            checked={isHighlightingAnnotations}
+                                            onCheckedChange={setIsHighlightingAnnotations}
+                                            disabled={totalAnnotationsCount === 0}
+                                            aria-label="Highlight annotations"
+                                        />
+                                        <Label htmlFor="highlight-annotations" className="text-sm text-muted-foreground cursor-pointer">
+                                            Highlight Annotations
+                                        </Label>
+                                    </div>
+                                )}
                                 <TooltipProvider>
                                     <Tooltip delayDuration={100}>
                                         <TooltipTrigger asChild>
                                             <Button
                                                 variant="outline"
-                                                onClick={handleRemoveLayers}
-                                                disabled={isProcessingLayers || !!isDownloading || totalAnnotationsCount === 0}
-                                                onMouseEnter={() => totalAnnotationsCount > 0 && setIsHighlightingLayers(true)}
-                                                onMouseLeave={() => setIsHighlightingLayers(false)}
+                                                onClick={handleRemoveAnnotations}
+                                                disabled={isProcessingAnnotations || !!isDownloading || totalAnnotationsCount === 0}
                                             >
-                                                {isProcessingLayers ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4" />}
-                                                Remove Layers
+                                                {isProcessingAnnotations ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4" />}
+                                                Remove Annotations
                                             </Button>
                                         </TooltipTrigger>
                                         {totalAnnotationsCount > 0 && (
@@ -519,7 +533,7 @@ export function RedactionTool() {
                                 </TooltipProvider>
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
-                                        <Button disabled={!originalPdf || redactions.length === 0 || !!isDownloading || isProcessingLayers}>
+                                        <Button disabled={!originalPdf || redactions.length === 0 || !!isDownloading || isProcessingAnnotations}>
                                             {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
                                             Download PDF
                                         </Button>
@@ -612,7 +626,7 @@ export function RedactionTool() {
                                         );
                                     })
                                 }
-                                {isHighlightingLayers && pageViewport && canvasRef.current && currentPageAnnotations
+                                {isHighlightingAnnotations && pageViewport && canvasRef.current && currentPageAnnotations
                                     .map((annot, index) => {
                                         const renderScale = canvasRef.current!.width / pageViewport.width;
                                         const canvasX = annot.x * renderScale;
