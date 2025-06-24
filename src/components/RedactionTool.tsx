@@ -61,10 +61,7 @@ export function RedactionTool() {
     const interactionRef = useRef<HTMLDivElement>(null);
     const viewportRef = useRef<HTMLDivElement>(null);
     
-    const dragStateRef = useRef<{
-        startPoint: { x: number, y: number } | null;
-        currentRect: { x: number, y: number, width: number, height: number } | null;
-    }>({ startPoint: null, currentRect: null });
+    const dragStateRef = useRef<{ startX: number, startY: number }>({ startX: 0, startY: 0 });
     const [ephemeralRect, setEphemeralRect] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
 
     const { toast } = useToast();
@@ -299,67 +296,67 @@ export function RedactionTool() {
         e.stopPropagation();
         
         const rect = canvasRef.current.getBoundingClientRect();
-        const startPoint = {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top
+        dragStateRef.current = {
+            startX: e.clientX - rect.left,
+            startY: e.clientY - rect.top
         };
-
-        dragStateRef.current.startPoint = startPoint;
         setIsDrawing(true);
     };
 
     useEffect(() => {
-        if (!isDrawing) {
-            return;
-        }
-
-        const handleMouseMove = (event: MouseEvent) => {
-            const { startPoint } = dragStateRef.current;
-            if (!startPoint || !canvasRef.current) return;
-            
+        if (!isDrawing) return;
+    
+        const handleMouseMove = (e: MouseEvent) => {
+            const { startX, startY } = dragStateRef.current;
+            if (!canvasRef.current) return;
             const rect = canvasRef.current.getBoundingClientRect();
-            const currentPos = {
-              x: event.clientX - rect.left,
-              y: event.clientY - rect.top
-            };
-
-            const x = Math.min(startPoint.x, currentPos.x);
-            const y = Math.min(startPoint.y, currentPos.y);
-            const width = Math.abs(currentPos.x - startPoint.x);
-            const height = Math.abs(currentPos.y - startPoint.y);
             
-            const newRect = { x, y, width, height };
-            dragStateRef.current.currentRect = newRect;
-            setEphemeralRect(newRect);
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+    
+            const x = Math.min(startX, currentX);
+            const y = Math.min(startY, currentY);
+            const width = Math.abs(startX - currentX);
+            const height = Math.abs(startY - currentY);
+    
+            setEphemeralRect({ x, y, width, height });
         };
-
-        const handleMouseUp = () => {
-            const { currentRect } = dragStateRef.current;
-
-            if (currentRect && pdfDocument && canvasRef.current && pageViewport) {
-                if (currentRect.width > 0 && currentRect.height > 0) {
-                    const renderScale = canvasRef.current.width / pageViewport.width;
-                    const pdfCoords = {
-                        x: currentRect.x / renderScale,
-                        y: (canvasRef.current.height - (currentRect.y + currentRect.height)) / renderScale,
-                        width: currentRect.width / renderScale,
-                        height: currentRect.height / renderScale
-                    };
-                    setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
-                }
+    
+        const handleMouseUp = (e: MouseEvent) => {
+            const { startX, startY } = dragStateRef.current;
+            if (!canvasRef.current || !pageViewport) {
+                setIsDrawing(false);
+                setEphemeralRect(null);
+                return;
+            };
+            const rect = canvasRef.current.getBoundingClientRect();
+            const endX = e.clientX - rect.left;
+            const endY = e.clientY - rect.top;
+    
+            const finalWidth = Math.abs(startX - endX);
+            const finalHeight = Math.abs(startY - endY);
+    
+            if (finalWidth > 0 && finalHeight > 0) {
+                const finalX = Math.min(startX, endX);
+                const finalY = Math.min(startY, endY);
+                
+                const renderScale = canvasRef.current.width / pageViewport.width;
+                const pdfCoords = {
+                    x: finalX / renderScale,
+                    y: (canvasRef.current.height - (finalY + finalHeight)) / renderScale,
+                    width: finalWidth / renderScale,
+                    height: finalHeight / renderScale,
+                };
+                setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
             }
             
-            dragStateRef.current.startPoint = null;
-            dragStateRef.current.currentRect = null;
+            setIsDrawing(false);
             setEphemeralRect(null);
-            
             if (viewportRef.current) {
                 viewportRef.current.focus();
             }
-
-            setIsDrawing(false);
         };
-        
+    
         document.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('mouseup', handleMouseUp);
         
@@ -367,7 +364,7 @@ export function RedactionTool() {
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [isDrawing, pdfDocument, pageViewport, currentPageNumber]);
+    }, [isDrawing, pageViewport, currentPageNumber]);
 
     const handleReset = () => {
         setOriginalPdf(null);
