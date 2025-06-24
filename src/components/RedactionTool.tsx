@@ -693,7 +693,6 @@ export function RedactionTool() {
                                 onMouseDown={handleMouseDown}
                                 onMouseMove={handleMouseMove}
                                 onMouseUp={handleMouseUp}
-                                onMouseLeave={handleMouseUp}
                             >
                                 <canvas ref={canvasRef} />
 
@@ -807,5 +806,4 @@ export function RedactionTool() {
             />
         </div>
     );
-
-    
+}
