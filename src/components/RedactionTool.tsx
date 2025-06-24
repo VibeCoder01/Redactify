@@ -314,41 +314,60 @@ export function RedactionTool() {
         setIsDrawing(true);
         setDrawStartPoint(getMousePos(e));
     };
-    
-    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+
+    const handleGlobalMouseMove = useCallback((event: MouseEvent) => {
         if (!isDrawing || !drawStartPoint || !canvasRef.current) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const currentPos = getMousePos(e);
-    
+        const rect = canvasRef.current.getBoundingClientRect();
+        const currentPos = {
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top
+        };
         const x = Math.min(drawStartPoint.x, currentPos.x);
         const y = Math.min(drawStartPoint.y, currentPos.y);
         const width = Math.abs(currentPos.x - drawStartPoint.x);
         const height = Math.abs(currentPos.y - drawStartPoint.y);
         setCurrentDrawing({ x, y, width, height });
-    };
+    }, [isDrawing, drawStartPoint]);
 
-    const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!isDrawing || !currentDrawing || !pdfDocument || !canvasRef.current || !pageViewport) return;
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const renderScale = canvasRef.current.width / pageViewport.width;
+    const handleGlobalMouseUp = useCallback(() => {
+        if (!isDrawing) return;
 
-        const pdfCoords = {
-            x: currentDrawing.x / renderScale,
-            y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / renderScale,
-            width: currentDrawing.width / renderScale,
-            height: currentDrawing.height / renderScale
-        };
+        if (currentDrawing && pdfDocument && canvasRef.current && pageViewport) {
+            const renderScale = canvasRef.current.width / pageViewport.width;
+            const pdfCoords = {
+                x: currentDrawing.x / renderScale,
+                y: (canvasRef.current.height - (currentDrawing.y + currentDrawing.height)) / renderScale,
+                width: currentDrawing.width / renderScale,
+                height: currentDrawing.height / renderScale
+            };
 
-        setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
+            // Only add redaction if it has some area
+            if (pdfCoords.width > 0 && pdfCoords.height > 0) {
+                 setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
+            }
+        }
         
         setIsDrawing(false);
         setDrawStartPoint(null);
         setCurrentDrawing(null);
         viewportRef.current?.focus();
-    };
+    }, [isDrawing, currentDrawing, pdfDocument, pageViewport, currentPageNumber]);
+    
+    useEffect(() => {
+        if (isDrawing) {
+            window.addEventListener('mousemove', handleGlobalMouseMove);
+            window.addEventListener('mouseup', handleGlobalMouseUp);
+        } else {
+            window.removeEventListener('mousemove', handleGlobalMouseMove);
+            window.removeEventListener('mouseup', handleGlobalMouseUp);
+        }
+
+        return () => {
+            window.removeEventListener('mousemove', handleGlobalMouseMove);
+            window.removeEventListener('mouseup', handleGlobalMouseUp);
+        };
+    }, [isDrawing, handleGlobalMouseMove, handleGlobalMouseUp]);
+
 
     const handleReset = () => {
         setOriginalPdf(null);
@@ -370,8 +389,10 @@ export function RedactionTool() {
     
     const handleRemoveSingleRedaction = (e: React.MouseEvent, indexToRemove: number) => {
         e.preventDefault();
-        setRedactions(prev => prev.filter((_, i) => i !== indexToRemove));
+        const redactionToRemove = redactions[indexToRemove];
+        setRedactions(prev => prev.filter((r) => r !== redactionToRemove));
     };
+
 
     const handleRemoveAnnotations = async () => {
         if (!originalPdf) return;
@@ -691,8 +712,6 @@ export function RedactionTool() {
                                 ref={interactionRef}
                                 className="relative cursor-crosshair"
                                 onMouseDown={handleMouseDown}
-                                onMouseMove={handleMouseMove}
-                                onMouseUp={handleMouseUp}
                             >
                                 <canvas ref={canvasRef} />
 
@@ -710,6 +729,7 @@ export function RedactionTool() {
                                 {pageViewport && canvasRef.current && redactions
                                     .filter(r => r.pageIndex === currentPageNumber - 1)
                                     .map((r, index) => {
+                                        const fullIndex = redactions.indexOf(r);
                                         const renderScale = canvasRef.current!.width / pageViewport.width;
 
                                         const canvasX = r.x * renderScale;
@@ -719,15 +739,15 @@ export function RedactionTool() {
 
                                         return (
                                             <div
-                                                key={index}
-                                                onMouseEnter={() => setHoveredRedactionIndex(index)}
+                                                key={fullIndex}
+                                                onMouseEnter={() => setHoveredRedactionIndex(fullIndex)}
                                                 onMouseLeave={() => setHoveredRedactionIndex(null)}
-                                                onContextMenu={(e) => handleRemoveSingleRedaction(e, index)}
+                                                onContextMenu={(e) => handleRemoveSingleRedaction(e, fullIndex)}
                                                 className={cn(
                                                     "absolute bg-black/70 cursor-pointer",
                                                     "transition-all duration-150",
                                                     {
-                                                        "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg": hoveredRedactionIndex === index
+                                                        "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg": hoveredRedactionIndex === fullIndex
                                                     }
                                                 )}
                                                 style={{
@@ -806,4 +826,5 @@ export function RedactionTool() {
             />
         </div>
     );
-}
+
+    
