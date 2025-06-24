@@ -291,11 +291,11 @@ export function RedactionTool() {
     };
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!canvasRef.current || !pdfDocument || isProcessingAnnotations || !!isDownloading) return;
+        if (!interactionRef.current || !pdfDocument || isProcessingAnnotations || !!isDownloading) return;
         e.preventDefault();
         e.stopPropagation();
         
-        const rect = canvasRef.current.getBoundingClientRect();
+        const rect = e.currentTarget.getBoundingClientRect();
         dragStateRef.current = {
             startX: e.clientX - rect.left,
             startY: e.clientY - rect.top
@@ -308,8 +308,8 @@ export function RedactionTool() {
     
         const handleMouseMove = (e: MouseEvent) => {
             const { startX, startY } = dragStateRef.current;
-            if (!canvasRef.current) return;
-            const rect = canvasRef.current.getBoundingClientRect();
+            if (!interactionRef.current) return;
+            const rect = interactionRef.current.getBoundingClientRect();
             
             const currentX = e.clientX - rect.left;
             const currentY = e.clientY - rect.top;
@@ -324,28 +324,28 @@ export function RedactionTool() {
     
         const handleMouseUp = (e: MouseEvent) => {
             const { startX, startY } = dragStateRef.current;
-            if (!canvasRef.current || !pageViewport) {
+            if (!interactionRef.current || !pageViewport) {
                 setIsDrawing(false);
                 setEphemeralRect(null);
                 return;
             };
-            const rect = canvasRef.current.getBoundingClientRect();
+            const rect = interactionRef.current.getBoundingClientRect();
             const endX = e.clientX - rect.left;
             const endY = e.clientY - rect.top;
     
             const finalWidth = Math.abs(startX - endX);
             const finalHeight = Math.abs(startY - endY);
     
-            if (finalWidth > 0 && finalHeight > 0) {
+            if (finalWidth > 5 && finalHeight > 5) {
                 const finalX = Math.min(startX, endX);
                 const finalY = Math.min(startY, endY);
                 
-                const renderScale = canvasRef.current.width / pageViewport.width;
+                const scale = pageViewport.scale;
                 const pdfCoords = {
-                    x: finalX / renderScale,
-                    y: (canvasRef.current.height - (finalY + finalHeight)) / renderScale,
-                    width: finalWidth / renderScale,
-                    height: finalHeight / renderScale,
+                    x: finalX / scale,
+                    y: (pageViewport.height - (finalY + finalHeight)) / scale,
+                    width: finalWidth / scale,
+                    height: finalHeight / scale,
                 };
                 setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
             }
@@ -728,12 +728,12 @@ export function RedactionTool() {
                                     .filter(r => r.pageIndex === currentPageNumber - 1)
                                     .map((r, index) => {
                                         const fullIndex = redactions.indexOf(r);
-                                        const renderScale = canvasRef.current!.width / pageViewport.width;
+                                        const scale = pageViewport.scale;
 
-                                        const canvasX = r.x * renderScale;
-                                        const canvasY = canvasRef.current!.height - (r.y + r.height) * renderScale;
-                                        const canvasWidth = r.width * renderScale;
-                                        const canvasHeight = r.height * renderScale;
+                                        const canvasX = r.x * scale;
+                                        const canvasY = pageViewport.height - (r.y + r.height) * scale;
+                                        const canvasWidth = r.width * scale;
+                                        const canvasHeight = r.height * scale;
 
                                         return (
                                             <div
