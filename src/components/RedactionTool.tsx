@@ -143,19 +143,6 @@ export function RedactionTool() {
             const buffer = e.target?.result as ArrayBuffer;
             if (buffer) {
                 try {
-                    // Proactively check for encryption with pdf-lib before loading with pdf.js
-                    try {
-                        await PDFDocument.load(buffer.slice(0));
-                    } catch (err: any) {
-                        if (err.constructor.name === 'EncryptedPDFError') {
-                            toast({ variant: 'destructive', title: 'Encrypted PDF', description: 'This document is encrypted and cannot be modified.' });
-                            handleReset();
-                            return;
-                        }
-                        // Rethrow other errors from pdf-lib
-                        throw err;
-                    }
-
                     setOriginalPdf(buffer);
                     const bufferForParsing = buffer.slice(0);
                     const pdf = await pdfjsLib.getDocument({ data: bufferForParsing }).promise;
