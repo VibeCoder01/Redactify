@@ -48,6 +48,9 @@ export function RedactionTool() {
     
     const [totalAnnotationsCount, setTotalAnnotationsCount] = useState(0);
     const [isHighlightingAnnotations, setIsHighlightingAnnotations] = useState(false);
+    const [annotationPages, setAnnotationPages] = useState<number[]>([]);
+    const [currentAnnotationIndex, setCurrentAnnotationIndex] = useState(-1);
+    const [isFlashing, setIsFlashing] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -58,18 +61,23 @@ export function RedactionTool() {
     
     const totalPages = pdfDocument?.numPages ?? 0;
 
-    const scanTotalAnnotations = async (pdf: pdfjsLib.PDFDocumentProxy) => {
+    const scanForAnnotations = async (pdf: pdfjsLib.PDFDocumentProxy) => {
         let count = 0;
+        const pagesWithAnnotations: number[] = [];
         for (let i = 1; i <= pdf.numPages; i++) {
             try {
                 const page = await pdf.getPage(i);
                 const annotations = await page.getAnnotations();
-                count += annotations.length;
+                if (annotations.length > 0) {
+                    count += annotations.length;
+                    pagesWithAnnotations.push(i);
+                }
             } catch (error) {
                 // Silently fail if annotations can't be fetched
             }
         }
         setTotalAnnotationsCount(count);
+        setAnnotationPages(pagesWithAnnotations);
     };
 
     const renderPage = useCallback(async (pageNum: number, renderAnnotations: boolean) => {
@@ -95,17 +103,15 @@ export function RedactionTool() {
 
     }, [pdfDocument]);
 
-    // This effect handles re-rendering the canvas when the page or redactions change.
     useEffect(() => {
         if (pdfDocument) {
             renderPage(currentPageNumber, isHighlightingAnnotations);
         }
     }, [pdfDocument, currentPageNumber, renderPage, isHighlightingAnnotations]);
 
-    // This effect handles resetting pan when the document or page changes.
     useEffect(() => {
         if (pdfDocument) {
-            setPanOffset({ x: 0, y: 0 }); // Reset pan on page change
+            setPanOffset({ x: 0, y: 0 });
         }
     }, [pdfDocument, currentPageNumber]);
 
@@ -173,7 +179,7 @@ export function RedactionTool() {
                     setOriginalPdf(buffer);
                     setPdfDocument(pdf);
                     setCurrentPageNumber(1);
-                    await scanTotalAnnotations(pdf);
+                    await scanForAnnotations(pdf);
                     toast({ title: 'PDF Loaded', description: `"${file.name}" has been loaded successfully.` });
                 } catch (error: any) {
                     if (error.name === 'PasswordException') {
@@ -280,6 +286,8 @@ export function RedactionTool() {
         setPanOffset({x: 0, y: 0});
         setTotalAnnotationsCount(0);
         setIsHighlightingAnnotations(false);
+        setAnnotationPages([]);
+        setCurrentAnnotationIndex(-1);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
@@ -313,13 +321,14 @@ export function RedactionTool() {
             if (annotationsRemoved > 0) {
                 const modifiedPdfBytes = await pdfDoc.save();
                 
-                // Reload the viewer with the modified PDF
                 setOriginalPdf(modifiedPdfBytes);
                 const pdf = await pdfjsLib.getDocument({ data: modifiedPdfBytes.slice(0) }).promise;
                 setPdfDocument(pdf);
-                setRedactions([]); // Clear redactions as the underlying doc has changed
+                setRedactions([]);
                 setTotalAnnotationsCount(0);
-                setCurrentPageNumber(1); // Reset to first page
+                setAnnotationPages([]);
+                setCurrentAnnotationIndex(-1);
+                setCurrentPageNumber(1);
                 toast({ title: "Annotations Removed", description: `${annotationsRemoved} annotations were removed from the document.` });
             } else {
                 toast({ title: "No Annotations Found", description: "No removable annotations were found in the document." });
@@ -335,35 +344,41 @@ export function RedactionTool() {
             setIsProcessingAnnotations(false);
         }
     };
-    
-    const findFirstAnnotationPage = async (): Promise<number | null> => {
-        if (!pdfDocument) return null;
-        for (let i = 1; i <= pdfDocument.numPages; i++) {
-            try {
-                const page = await pdfDocument.getPage(i);
-                const annotations = await page.getAnnotations();
-                if (annotations.length > 0) {
-                    return i; // Page numbers are 1-based
-                }
-            } catch (error) {
-                // Silently fail if annotations can't be fetched
-            }
-        }
-        return null;
+
+    const triggerFlash = () => {
+        setIsFlashing(true);
+        setTimeout(() => setIsFlashing(false), 1000);
     };
     
     const handleHighlightToggle = async (checked: boolean) => {
         setIsHighlightingAnnotations(checked);
-        if (checked && pdfDocument) {
-            const firstPage = await findFirstAnnotationPage();
-            if (firstPage) {
-                setCurrentPageNumber(firstPage);
-                toast({
-                    title: "Navigated to Annotation",
-                    description: `Moved to page ${firstPage} to show the first annotation.`,
-                });
-            }
+        if (checked && annotationPages.length > 0) {
+            setCurrentAnnotationIndex(0);
+            setCurrentPageNumber(annotationPages[0]);
+            triggerFlash();
+            toast({
+                title: "Navigated to Annotation",
+                description: `Moved to page ${annotationPages[0]} to show the first annotation.`,
+            });
+        } else if (!checked) {
+            setCurrentAnnotationIndex(-1);
         }
+    };
+
+    const handleNextAnnotation = () => {
+        if (annotationPages.length === 0) return;
+        const nextIndex = (currentAnnotationIndex + 1) % annotationPages.length;
+        setCurrentAnnotationIndex(nextIndex);
+        setCurrentPageNumber(annotationPages[nextIndex]);
+        triggerFlash();
+    };
+
+    const handlePrevAnnotation = () => {
+        if (annotationPages.length === 0) return;
+        const prevIndex = (currentAnnotationIndex - 1 + annotationPages.length) % annotationPages.length;
+        setCurrentAnnotationIndex(prevIndex);
+        setCurrentPageNumber(annotationPages[prevIndex]);
+        triggerFlash();
     };
 
     const applyRedactionsToPdf = async (pdfDoc: PDFDocument) => {
@@ -523,6 +538,19 @@ export function RedactionTool() {
                                         <Label htmlFor="highlight-annotations" className="text-sm text-muted-foreground cursor-pointer">
                                             Highlight Annotations
                                         </Label>
+                                        {isHighlightingAnnotations && annotationPages.length > 0 && (
+                                            <div className="flex items-center gap-1">
+                                                <Button variant="outline" size="icon" onClick={handlePrevAnnotation} disabled={annotationPages.length <= 1}>
+                                                    <ChevronLeft className="h-4 w-4" />
+                                                </Button>
+                                                <span className="text-sm text-muted-foreground w-20 text-center">
+                                                    {currentAnnotationIndex + 1} of {annotationPages.length}
+                                                </span>
+                                                <Button variant="outline" size="icon" onClick={handleNextAnnotation} disabled={annotationPages.length <= 1}>
+                                                    <ChevronRight className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                                 <TooltipProvider>
@@ -579,6 +607,7 @@ export function RedactionTool() {
                     tabIndex={-1}
                     className={cn(
                         "transition-colors relative p-0 h-[70vh] w-full rounded-md border bg-muted/20 overflow-hidden focus:outline-none",
+                        { "flash-effect": isFlashing }
                     )}
                  >
                     {pdfDocument && (
@@ -680,5 +709,3 @@ export function RedactionTool() {
         </div>
     );
 }
-
-    
