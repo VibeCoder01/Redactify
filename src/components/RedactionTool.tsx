@@ -7,7 +7,7 @@ import { PDFDocument, rgb } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser, Undo2 } from "lucide-react";
+import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser, Undo2, Layers } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +37,7 @@ export function RedactionTool() {
 
     const [isDownloading, setIsDownloading] = useState<string | null>(null);
     const [isParsing, setIsParsing] = useState(false);
+    const [isProcessingLayers, setIsProcessingLayers] = useState(false);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     
@@ -286,6 +287,48 @@ export function RedactionTool() {
         setRedactions(prev => prev.slice(0, -1));
         viewportRef.current?.focus();
     };
+
+    const handleRemoveLayers = async () => {
+        if (!originalPdf) return;
+    
+        setIsProcessingLayers(true);
+        try {
+            const pdfDoc = await PDFDocument.load(originalPdf.slice(0));
+            const pages = pdfDoc.getPages();
+            let annotationsRemoved = 0;
+    
+            for (const page of pages) {
+                const annotations = page.getAnnotations();
+                if (annotations.length > 0) {
+                    annotationsRemoved += annotations.length;
+                    // Create a copy for safe iteration while removing
+                    [...annotations].forEach(annot => {
+                        page.removeAnnotation(annot);
+                    });
+                }
+            }
+            
+            if (annotationsRemoved > 0) {
+                const modifiedPdfBytes = await pdfDoc.save();
+                
+                // Reload the viewer with the modified PDF
+                setOriginalPdf(modifiedPdfBytes);
+                const pdf = await pdfjsLib.getDocument({ data: modifiedPdfBytes.slice(0) }).promise;
+                setPdfDocument(pdf);
+                setRedactions([]); // Clear redactions as the underlying doc has changed
+                setCurrentPageNumber(1); // Reset to first page
+                toast({ title: "Layers Removed", description: `${annotationsRemoved} annotations were removed from the document.` });
+            } else {
+                toast({ title: "No Layers Found", description: "No removable annotations were found in the document." });
+            }
+    
+        } catch (error) {
+            console.error("Failed to remove layers:", error);
+            toast({ variant: 'destructive', title: 'Processing Error', description: 'Could not remove layers from the PDF.' });
+        } finally {
+            setIsProcessingLayers(false);
+        }
+    };
     
     const applyRedactionsToPdf = async (pdfDoc: PDFDocument) => {
         const pages = pdfDoc.getPages();
@@ -397,7 +440,7 @@ export function RedactionTool() {
     return (
         <div className="flex flex-col gap-6">
             <Card>
-                <CardContent className="flex items-center justify-between p-4">
+                <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
                     <div className="flex items-center gap-4">
                         {pdfDocument ? (
                              <div className="flex items-center gap-x-4">
@@ -416,18 +459,22 @@ export function RedactionTool() {
                              <p className="text-sm text-muted-foreground">Upload a PDF to begin.</p>
                         )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         {pdfDocument && (
                             <>
-                                <Button variant="outline" onClick={handleUndo} disabled={redactions.length === 0}>
+                                <Button variant="outline" onClick={handleUndo} disabled={redactions.length === 0 || !!isDownloading || isProcessingLayers}>
                                     <Undo2 className="mr-2 h-4 w-4"/> Undo
                                 </Button>
-                                <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0}>
+                                <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0 || !!isDownloading || isProcessingLayers}>
                                     <Eraser className="mr-2 h-4 w-4"/> Clear All
+                                </Button>
+                                <Button variant="outline" onClick={handleRemoveLayers} disabled={isProcessingLayers || !!isDownloading}>
+                                    {isProcessingLayers ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4"/>}
+                                    Remove Layers
                                 </Button>
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
-                                        <Button disabled={!originalPdf || redactions.length === 0 || !!isDownloading}>
+                                        <Button disabled={!originalPdf || redactions.length === 0 || !!isDownloading || isProcessingLayers}>
                                             {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
                                             Download PDF
                                         </Button>
