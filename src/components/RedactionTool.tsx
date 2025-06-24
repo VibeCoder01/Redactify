@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser, Undo2, Layers } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 if (typeof window !== 'undefined') {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -43,6 +44,10 @@ export function RedactionTool() {
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     
+    const [currentPageAnnotations, setCurrentPageAnnotations] = useState<any[]>([]);
+    const [totalAnnotationsCount, setTotalAnnotationsCount] = useState(0);
+    const [isHighlightingLayers, setIsHighlightingLayers] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
@@ -52,9 +57,25 @@ export function RedactionTool() {
     
     const totalPages = pdfDocument?.numPages ?? 0;
 
+    const scanTotalAnnotations = async (pdf: pdfjsLib.PDFDocumentProxy) => {
+        let count = 0;
+        for (let i = 1; i <= pdf.numPages; i++) {
+            try {
+                const page = await pdf.getPage(i);
+                const annotations = await page.getAnnotations();
+                count += annotations.length;
+            } catch (error) {
+                console.error(`Could not get annotations for page ${i}:`, error);
+            }
+        }
+        setTotalAnnotationsCount(count);
+    };
+
     const renderPage = useCallback(async (pageNum: number) => {
         if (!pdfDocument || !canvasRef.current) return;
         
+        setCurrentPageAnnotations([]);
+
         const page = await pdfDocument.getPage(pageNum);
         const viewport = page.getViewport({ scale: 2.0 });
         setPageViewport(viewport);
@@ -67,6 +88,23 @@ export function RedactionTool() {
         
         if (context) {
             await page.render({ canvasContext: context, viewport }).promise;
+        }
+
+        try {
+            const annotations = await page.getAnnotations();
+            const pageAnnotations = annotations.map(annot => {
+                if (!annot.rect) return null;
+                const [x1, y1, x2, y2] = annot.rect;
+                return {
+                    x: x1,
+                    y: y1,
+                    width: x2 - x1,
+                    height: y2 - y1,
+                };
+            }).filter(Boolean);
+            setCurrentPageAnnotations(pageAnnotations as any[]);
+        } catch (error) {
+            console.error(`Could not get annotations for page ${pageNum}:`, error);
         }
     }, [pdfDocument]);
 
@@ -148,6 +186,7 @@ export function RedactionTool() {
                     const pdf = await pdfjsLib.getDocument({ data: bufferForParsing }).promise;
                     setPdfDocument(pdf);
                     setCurrentPageNumber(1);
+                    await scanTotalAnnotations(pdf);
                     toast({ title: 'PDF Loaded', description: `"${file.name}" has been loaded successfully.` });
                 } catch (error: any) {
                     if (error.name === 'PasswordException') {
@@ -252,6 +291,9 @@ export function RedactionTool() {
         setCurrentPageNumber(1);
         setIsDownloading(null);
         setPanOffset({x: 0, y: 0});
+        setTotalAnnotationsCount(0);
+        setCurrentPageAnnotations([]);
+        setIsHighlightingLayers(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
@@ -290,6 +332,8 @@ export function RedactionTool() {
                 const pdf = await pdfjsLib.getDocument({ data: modifiedPdfBytes.slice(0) }).promise;
                 setPdfDocument(pdf);
                 setRedactions([]); // Clear redactions as the underlying doc has changed
+                setTotalAnnotationsCount(0);
+                setCurrentPageAnnotations([]);
                 setCurrentPageNumber(1); // Reset to first page
                 toast({ title: "Layers Removed", description: `${annotationsRemoved} annotations were removed from the document.` });
             } else {
@@ -452,10 +496,27 @@ export function RedactionTool() {
                                 <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0 || !!isDownloading || isProcessingLayers}>
                                     <Eraser className="mr-2 h-4 w-4"/> Clear All
                                 </Button>
-                                <Button variant="outline" onClick={handleRemoveLayers} disabled={isProcessingLayers || !!isDownloading}>
-                                    {isProcessingLayers ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4"/>}
-                                    Remove Layers
-                                </Button>
+                                <TooltipProvider>
+                                    <Tooltip delayDuration={100}>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                variant="outline"
+                                                onClick={handleRemoveLayers}
+                                                disabled={isProcessingLayers || !!isDownloading || totalAnnotationsCount === 0}
+                                                onMouseEnter={() => totalAnnotationsCount > 0 && setIsHighlightingLayers(true)}
+                                                onMouseLeave={() => setIsHighlightingLayers(false)}
+                                            >
+                                                {isProcessingLayers ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4" />}
+                                                Remove Layers
+                                            </Button>
+                                        </TooltipTrigger>
+                                        {totalAnnotationsCount > 0 && (
+                                            <TooltipContent>
+                                                <p>Removes {totalAnnotationsCount} annotation {totalAnnotationsCount === 1 ? 'object' : 'objects'}.</p>
+                                            </TooltipContent>
+                                        )}
+                                    </Tooltip>
+                                </TooltipProvider>
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                         <Button disabled={!originalPdf || redactions.length === 0 || !!isDownloading || isProcessingLayers}>
@@ -541,6 +602,28 @@ export function RedactionTool() {
                                                         "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg": hoveredRedactionIndex === index
                                                     }
                                                 )}
+                                                style={{
+                                                    left: canvasX,
+                                                    top: canvasY,
+                                                    width: canvasWidth,
+                                                    height: canvasHeight,
+                                                }}
+                                            />
+                                        );
+                                    })
+                                }
+                                {isHighlightingLayers && pageViewport && canvasRef.current && currentPageAnnotations
+                                    .map((annot, index) => {
+                                        const renderScale = canvasRef.current!.width / pageViewport.width;
+                                        const canvasX = annot.x * renderScale;
+                                        const canvasY = canvasRef.current!.height - (annot.y + annot.height) * renderScale;
+                                        const canvasWidth = annot.width * renderScale;
+                                        const canvasHeight = annot.height * renderScale;
+
+                                        return (
+                                            <div
+                                                key={`annot-${index}`}
+                                                className="absolute bg-accent/30 border-2 border-dashed border-accent pointer-events-none"
                                                 style={{
                                                     left: canvasX,
                                                     top: canvasY,
