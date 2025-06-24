@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack -p 6000",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
+    "dev": "npx next dev --turbopack",
+    "build": "npx next build",
+    "start": "npx next start",
+    "lint": "npx next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -35,7 +35,6 @@
     "lucide-react": "^0.475.0",
     "next": "15.3.3",
     "pdf-lib": "^1.17.1",
-
     "pdfjs-dist": "^4.4.170",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
