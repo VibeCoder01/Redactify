@@ -56,9 +56,10 @@ export function RedactionTool() {
     const [isHighlightingAnnotations, setIsHighlightingAnnotations] = useState(false);
     const [currentAnnotationIndex, setCurrentAnnotationIndex] = useState(-1);
     const [isFlashing, setIsFlashing] = useState(false);
-
+    
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const annotationLayerRef = useRef<HTMLDivElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
     const viewportRef = useRef<HTMLDivElement>(null);
 
@@ -86,32 +87,47 @@ export function RedactionTool() {
         setAllAnnotations(annotationsList);
     };
 
-    const renderPage = useCallback(async (pageNum: number, renderAnnotations: boolean) => {
-        if (!pdfDocument || !canvasRef.current) return;
-        
+    const renderPage = useCallback(async (pageNum: number) => {
+        if (!pdfDocument || !canvasRef.current || !annotationLayerRef.current) return;
+    
         const page = await pdfDocument.getPage(pageNum);
         const viewport = page.getViewport({ scale: 2.0 });
         setPageViewport(viewport);
-
+    
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
+        const annotationLayerDiv = annotationLayerRef.current;
         
+        // Clear previous annotation layer
+        annotationLayerDiv.innerHTML = '';
+    
         canvas.height = viewport.height;
         canvas.width = viewport.width;
-        
+    
+        annotationLayerDiv.style.width = `${viewport.width}px`;
+        annotationLayerDiv.style.height = `${viewport.height}px`;
+    
         if (context) {
-            await page.render({ 
-                canvasContext: context, 
-                viewport,
-                renderAnnotationLayer: renderAnnotations
-            }).promise;
+            await page.render({ canvasContext: context, viewport }).promise;
         }
-
-    }, [pdfDocument]);
+    
+        if (isHighlightingAnnotations) {
+            const annotations = await page.getAnnotations();
+            
+            // Use the official PDF.js annotation layer builder to render annotations in a separate div
+            pdfjsLib.AnnotationLayer.render({
+                viewport: viewport.clone({ dontFlip: true }),
+                div: annotationLayerDiv,
+                annotations: annotations,
+                page: page,
+            });
+        }
+    
+    }, [pdfDocument, isHighlightingAnnotations]);
 
     useEffect(() => {
         if (pdfDocument) {
-            renderPage(currentPageNumber, isHighlightingAnnotations);
+            renderPage(currentPageNumber);
         }
     }, [pdfDocument, currentPageNumber, renderPage, isHighlightingAnnotations]);
 
@@ -355,7 +371,7 @@ export function RedactionTool() {
         setTimeout(() => setIsFlashing(false), 1000);
     };
     
-    const handleHighlightToggle = async (checked: boolean) => {
+    const handleHighlightToggle = (checked: boolean) => {
         setIsHighlightingAnnotations(checked);
         if (checked && allAnnotations.length > 0) {
             setCurrentAnnotationIndex(0);
@@ -632,6 +648,8 @@ export function RedactionTool() {
                                 onMouseLeave={() => { if(isDrawing) handleMouseUp;}}
                             >
                                 <canvas ref={canvasRef} />
+                                <div ref={annotationLayerRef} className="absolute top-0 left-0" />
+
                                 {isDrawing && currentDrawing && (
                                     <div
                                         className="absolute border-2 border-dashed border-primary bg-primary/20 pointer-events-none"
