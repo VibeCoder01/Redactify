@@ -9,6 +9,13 @@ Redactify is a web application for redacting sensitive information from PDF docu
 - **Undo, clear and reset** – manage redaction boxes before finalising the document.
 - **Download options** – export either a _recoverable_ or _secure_ flattened PDF.
 
+- ![image](https://github.com/user-attachments/assets/440c275f-61aa-4b80-9525-fd4fa51f91d7)
+- ![image](https://github.com/user-attachments/assets/c86d5eeb-9b07-486f-91b7-aa8327ca8f6f)
+- ![image](https://github.com/user-attachments/assets/bc72b809-a48c-495c-8a32-9d58bc68a6bb)
+
+
+
+
 ## Project structure
 
 ```
