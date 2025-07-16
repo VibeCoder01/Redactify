@@ -23,6 +23,9 @@ export default function Home() {
       <main className="flex-1 p-4 sm:p-6 md:p-8">
         <RedactionTool />
       </main>
+      <footer className="p-4 text-center text-sm text-muted-foreground">
+        For support email vibecoder01+redactify@gmail.com
+      </footer>
     </div>
   );
 }
