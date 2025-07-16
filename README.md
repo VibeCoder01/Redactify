@@ -51,3 +51,5 @@ src/
 ## License
 
 This project is released under the [MIT License](LICENSE).
+
+For support email vibecoder01+redactify@gmail.com
