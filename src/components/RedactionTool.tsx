@@ -3,11 +3,11 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { PDFDocument, rgb, PDFName, PDFArray } from 'pdf-lib';
+import { PDFDocument, rgb, PDFName, PDFArray, PDFRef } from 'pdf-lib';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser, Undo2, Layers } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { FileUp, Download, Loader2, Trash2, ChevronLeft, ChevronRight, Eraser, Undo2, Layers, BookMarked } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -32,7 +32,23 @@ interface AnnotationInfo {
     id?: string;
 }
 
+interface OptionalContentGroup {
+    id: string;
+    name: string;
+    visible: boolean;
+}
+
+interface OptionalContentConfig {
+    name: string;
+    ocgIds: string[];
+}
+
 const PAN_SPEED = 50;
+
+// Duck-typing check for a PDF dictionary-like object
+const isDictionaryLike = (obj: unknown): obj is { get: (key: any) => any } => {
+    return typeof obj === 'object' && obj !== null && 'get' in obj && typeof (obj as any).get === 'function';
+};
 
 export function RedactionTool() {
     const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
@@ -55,11 +71,15 @@ export function RedactionTool() {
     const [isHighlightingAnnotations, setIsHighlightingAnnotations] = useState(false);
     const [currentAnnotationIndex, setCurrentAnnotationIndex] = useState(-1);
     const [isFlashing, setIsFlashing] = useState(false);
+
+    const [optionalContentGroups, setOptionalContentGroups] = useState<OptionalContentGroup[]>([]);
+    const [optionalContentConfigs, setOptionalContentConfigs] = useState<OptionalContentConfig[]>([]);
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const interactionRef = useRef<HTMLDivElement>(null);
     const viewportRef = useRef<HTMLDivElement>(null);
+    const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
     
     const dragStateRef = useRef<{ startX: number, startY: number }>({ startX: 0, startY: 0 });
     const [ephemeralRect, setEphemeralRect] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
@@ -88,8 +108,74 @@ export function RedactionTool() {
         setAllAnnotations(annotationsList);
     };
 
+    const scanForOptionalContent = async (pdf: pdfjsLib.PDFDocumentProxy) => {
+        try {
+            const optionalContent = await pdf.getOptionalContentConfig();
+            if (!optionalContent) {
+                setOptionalContentGroups([]);
+                setOptionalContentConfigs([]);
+                return;
+            }
+            
+            const ocgPromises = optionalContent.getOCGs().map(async (ocg: any) => {
+                const properties = await pdf.getOptionalContentGroup(ocg.id);
+                return {
+                    id: ocg.id,
+                    name: properties?.name || `Layer ${ocg.id}`,
+                    visible: true
+                };
+            });
+    
+            const groups = await Promise.all(ocgPromises);
+            setOptionalContentGroups(groups);
+
+            // Parse configurations
+            const pdfDoc = await PDFDocument.load(await pdf.getData());
+            const catalog = pdfDoc.catalog;
+            const ocProperties = catalog.get(PDFName.of('OCProperties'));
+            
+            const parsedConfigs: OptionalContentConfig[] = [];
+            if (isDictionaryLike(ocProperties)) {
+                const configsArray = ocProperties.get(PDFName.of('Configs'));
+
+                if (configsArray instanceof PDFArray) {
+                    configsArray.asArray().forEach(configRef => {
+                        if (configRef instanceof PDFRef) {
+                            const configDict = pdfDoc.context.lookup(configRef);
+                            if (isDictionaryLike(configDict)) {
+                                const name = configDict.get(PDFName.of('Name'))?.toString().slice(1) || 'Unnamed Preset';
+                                const ocgRefs = configDict.get(PDFName.of('Order')) as PDFArray;
+                                const ocgIds: string[] = [];
+
+                                if (ocgRefs) {
+                                    ocgRefs.asArray().forEach(item => {
+                                        if (item instanceof PDFRef) {
+                                            const ocgId = `${item.objectNumber}R`;
+                                            ocgIds.push(ocgId);
+                                        }
+                                    });
+                                }
+                                parsedConfigs.push({ name, ocgIds });
+                            }
+                        }
+                    });
+                }
+            }
+            setOptionalContentConfigs(parsedConfigs);
+
+        } catch (error) {
+            setOptionalContentGroups([]);
+            setOptionalContentConfigs([]);
+        }
+    };
+
     const renderPage = useCallback(async (pageNum: number) => {
         if (!pdfDocument || !canvasRef.current) return;
+
+        if (renderTaskRef.current) {
+            renderTaskRef.current.cancel();
+            renderTaskRef.current = null;
+        }
     
         const page = await pdfDocument.getPage(pageNum);
         const viewport = page.getViewport({ scale: 2.0 });
@@ -102,44 +188,58 @@ export function RedactionTool() {
         canvas.width = viewport.width;
     
         if (context) {
-            // Render the PDF page first
-            await page.render({ canvasContext: context, viewport }).promise;
-    
-            // If highlighting is enabled, draw annotations on top
-            if (isHighlightingAnnotations) {
-                const annotations = await page.getAnnotations();
-                annotations.forEach(annotation => {
-                    if (!annotation.rect) {
-                        return;
-                    }
+            const visibleOcgIds = optionalContentGroups.filter(g => g.visible).map(g => g.id);
+            const renderTask = page.render({ 
+                canvasContext: context, 
+                viewport,
+                optionalContentConfig: await pdfDocument.getOptionalContentConfig(),
+                intent: 'display',
+                includeAnnotationStorage: true,
+                printAnnotationStorage: true,
+            });
 
-                    const [x1, y1, x2, y2] = annotation.rect;
+            renderTask.promise.then(() => {
+                // If highlighting is enabled, draw annotations on top
+                if (isHighlightingAnnotations) {
+                    page.getAnnotations().then(annotations => {
+                        annotations.forEach(annotation => {
+                            if (!annotation.rect) {
+                                return;
+                            }
 
-                    const p1 = viewport.convertToViewportPoint(x1, y1);
-                    const p2 = viewport.convertToViewportPoint(x2, y2);
+                            const [x1, y1, x2, y2] = annotation.rect;
 
-                    const canvasX = Math.min(p1[0], p2[0]);
-                    const canvasY = Math.min(p1[1], p2[1]);
-                    const width = Math.abs(p1[0] - p2[0]);
-                    const height = Math.abs(p1[1] - p2[1]);
-                    
-                    context.fillStyle = 'hsla(174, 100%, 29%, 0.4)';
-                    context.fillRect(canvasX, canvasY, width, height);
+                            const p1 = viewport.convertToViewportPoint(x1, y1);
+                            const p2 = viewport.convertToViewportPoint(x2, y2);
 
-                    context.strokeStyle = 'hsl(174, 100%, 29%)';
-                    context.lineWidth = 1;
-                    context.strokeRect(canvasX, canvasY, width, height);
-                });
-            }
+                            const canvasX = Math.min(p1[0], p2[0]);
+                            const canvasY = Math.min(p1[1], p2[1]);
+                            const width = Math.abs(p1[0] - p2[0]);
+                            const height = Math.abs(p1[1] - p2[1]);
+                            
+                            context.fillStyle = 'hsla(174, 100%, 29%, 0.4)';
+                            context.fillRect(canvasX, canvasY, width, height);
+
+                            context.strokeStyle = 'hsl(174, 100%, 29%)';
+                            context.lineWidth = 1;
+                            context.strokeRect(canvasX, canvasY, width, height);
+                        });
+                    });
+                }
+            }).catch(() => {
+                // Render was cancelled
+            });
+
+            renderTaskRef.current = renderTask;
         }
     
-    }, [pdfDocument, isHighlightingAnnotations]);
+    }, [pdfDocument, isHighlightingAnnotations, optionalContentGroups]);
 
     useEffect(() => {
         if (pdfDocument) {
             renderPage(currentPageNumber);
         }
-    }, [pdfDocument, currentPageNumber, renderPage, isHighlightingAnnotations]);
+    }, [pdfDocument, currentPageNumber, renderPage, isHighlightingAnnotations, optionalContentGroups]);
 
     useEffect(() => {
         if (isHighlightingAnnotations && currentAnnotationIndex > -1 && allAnnotations.length > 0 && pageViewport && viewportRef.current) {
@@ -244,7 +344,10 @@ export function RedactionTool() {
                     setOriginalPdf(buffer);
                     setPdfDocument(pdf);
                     setCurrentPageNumber(1);
-                    await scanForAnnotations(pdf);
+                    await Promise.all([
+                        scanForAnnotations(pdf),
+                        scanForOptionalContent(pdf)
+                    ]);
                     toast({ title: 'PDF Loaded', description: `"${file.name}" has been loaded successfully.` });
                 } catch (error: any) {
                     if (error.name === 'PasswordException') {
@@ -340,14 +443,16 @@ export function RedactionTool() {
                 const finalX = Math.min(startX, endX);
                 const finalY = Math.min(startY, endY);
                 
-                const scale = pageViewport.scale;
-                const pdfCoords = {
-                    x: finalX / scale,
-                    y: (pageViewport.height - (finalY + finalHeight)) / scale,
-                    width: finalWidth / scale,
-                    height: finalHeight / scale,
-                };
-                setRedactions(prev => [...prev, { ...pdfCoords, pageIndex: currentPageNumber - 1 }]);
+                const [pdfX, pdfY] = pageViewport.convertToPdfPoint(finalX, finalY + finalHeight);
+                const [pdfX2, pdfY2] = pageViewport.convertToPdfPoint(finalX + finalWidth, finalY);
+
+                setRedactions(prev => [...prev, {
+                    x: Math.min(pdfX, pdfX2),
+                    y: Math.min(pdfY, pdfY2),
+                    width: Math.abs(pdfX - pdfX2),
+                    height: Math.abs(pdfY - pdfY2),
+                    pageIndex: currentPageNumber - 1,
+                }]);
             }
             
             setIsDrawing(false);
@@ -376,6 +481,8 @@ export function RedactionTool() {
         setAllAnnotations([]);
         setIsHighlightingAnnotations(false);
         setCurrentAnnotationIndex(-1);
+        setOptionalContentGroups([]);
+        setOptionalContentConfigs([]);
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
@@ -469,6 +576,22 @@ export function RedactionTool() {
         const prevAnnotation = allAnnotations[prevIndex];
         setCurrentAnnotationIndex(prevIndex);
         setCurrentPageNumber(prevAnnotation.pageIndex);
+    };
+
+    const handleLayerToggle = (id: string, checked: boolean) => {
+        setOptionalContentGroups(prev =>
+            prev.map(g => (g.id === id ? { ...g, visible: checked } : g))
+        );
+    };
+    
+    const applyLayerConfiguration = (config: OptionalContentConfig) => {
+        setOptionalContentGroups(prev =>
+            prev.map(g => ({ ...g, visible: config.ocgIds.includes(g.id) }))
+        );
+        toast({
+            title: "Layer Preset Applied",
+            description: `Switched to "${config.name}" view.`,
+        });
     };
 
     const applyRedactionsToPdf = async (pdfDoc: PDFDocument) => {
@@ -616,6 +739,46 @@ export function RedactionTool() {
                                 <Button variant="outline" onClick={() => setRedactions([])} disabled={redactions.length === 0 || !!isDownloading || isProcessingAnnotations}>
                                     <Eraser className="mr-2 h-4 w-4"/> Clear All
                                 </Button>
+                                 {optionalContentGroups.length > 0 && (
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="outline">
+                                                <Layers className="mr-2 h-4 w-4" />
+                                                Layers
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent>
+                                            {optionalContentConfigs.length > 0 && (
+                                                <DropdownMenuSub>
+                                                    <DropdownMenuSubTrigger>
+                                                        <BookMarked className="mr-2 h-4 w-4" />
+                                                        <span>Presets</span>
+                                                    </DropdownMenuSubTrigger>
+                                                    <DropdownMenuSubContent>
+                                                        <DropdownMenuLabel>Layer Presets</DropdownMenuLabel>
+                                                        <DropdownMenuSeparator />
+                                                        {optionalContentConfigs.map(config => (
+                                                             <DropdownMenuItem key={config.name} onSelect={() => applyLayerConfiguration(config)}>
+                                                                {config.name}
+                                                            </DropdownMenuItem>
+                                                        ))}
+                                                    </DropdownMenuSubContent>
+                                                </DropdownMenuSub>
+                                            )}
+                                            <DropdownMenuLabel>Toggle Layers</DropdownMenuLabel>
+                                            <DropdownMenuSeparator />
+                                            {optionalContentGroups.map(ocg => (
+                                                <DropdownMenuCheckboxItem
+                                                    key={ocg.id}
+                                                    checked={ocg.visible}
+                                                    onCheckedChange={(checked) => handleLayerToggle(ocg.id, checked)}
+                                                >
+                                                    {ocg.name}
+                                                </DropdownMenuCheckboxItem>
+                                            ))}
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                )}
                                 {allAnnotations.length > 0 && (
                                     <div className="flex items-center gap-2 border-l pl-4">
                                         <Switch
@@ -666,7 +829,7 @@ export function RedactionTool() {
                                     <DropdownMenuTrigger asChild>
                                         <Button disabled={!originalPdf || redactions.length === 0 || !!isDownloading || isProcessingAnnotations}>
                                             {isDownloading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-                                            Download PDF
+                                            Download Redacted PDF
                                         </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent>
@@ -728,12 +891,8 @@ export function RedactionTool() {
                                     .filter(r => r.pageIndex === currentPageNumber - 1)
                                     .map((r, index) => {
                                         const fullIndex = redactions.indexOf(r);
-                                        const scale = pageViewport.scale;
-
-                                        const canvasX = r.x * scale;
-                                        const canvasY = pageViewport.height - (r.y + r.height) * scale;
-                                        const canvasWidth = r.width * scale;
-                                        const canvasHeight = r.height * scale;
+                                        const [canvasX, canvasY] = pageViewport.convertToViewportPoint(r.x, r.y);
+                                        const [canvasX2, canvasY2] = pageViewport.convertToViewportPoint(r.x + r.width, r.y + r.height);
 
                                         return (
                                             <div
@@ -749,10 +908,10 @@ export function RedactionTool() {
                                                     }
                                                 )}
                                                 style={{
-                                                    left: canvasX,
-                                                    top: canvasY,
-                                                    width: canvasWidth,
-                                                    height: canvasHeight,
+                                                    left: Math.min(canvasX, canvasX2),
+                                                    top: Math.min(canvasY, canvasY2),
+                                                    width: Math.abs(canvasX - canvasX2),
+                                                    height: Math.abs(canvasY - canvasY2),
                                                 }}
                                             />
                                         );
