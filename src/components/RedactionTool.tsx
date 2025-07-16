@@ -52,6 +52,7 @@ const isDictionaryLike = (obj: unknown): obj is { get: (key: any) => any } => {
 
 export function RedactionTool() {
     const [originalPdf, setOriginalPdf] = useState<ArrayBuffer | null>(null);
+    const [originalFilename, setOriginalFilename] = useState<string>('');
     const [pdfDocument, setPdfDocument] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
     const [redactions, setRedactions] = useState<RedactionArea[]>([]);
     
@@ -333,6 +334,7 @@ export function RedactionTool() {
 
         handleReset();
         setIsParsing(true);
+        setOriginalFilename(file.name);
 
         const reader = new FileReader();
         reader.onload = async (e) => {
@@ -473,6 +475,7 @@ export function RedactionTool() {
 
     const handleReset = () => {
         setOriginalPdf(null);
+        setOriginalFilename('');
         setPdfDocument(null);
         setRedactions([]);
         setCurrentPageNumber(1);
@@ -607,6 +610,19 @@ export function RedactionTool() {
         });
     }
 
+    const getRedactedFilename = (suffix: string) => {
+        if (!originalFilename) {
+            return `redacted-document-${suffix}.pdf`;
+        }
+        const lastDot = originalFilename.lastIndexOf('.');
+        if (lastDot === -1) {
+            return `${originalFilename} (Redacted).pdf`;
+        }
+        const name = originalFilename.substring(0, lastDot);
+        const ext = originalFilename.substring(lastDot);
+        return `${name} (Redacted)${ext}`;
+    }
+
     const handleDownloadRecoverable = async () => {
         if (!originalPdf || redactions.length === 0) return;
     
@@ -616,7 +632,7 @@ export function RedactionTool() {
             await applyRedactionsToPdf(pdfDoc);
     
             const pdfBytes = await pdfDoc.save();
-            downloadPdf(pdfBytes, 'redacted-document-recoverable.pdf');
+            downloadPdf(pdfBytes, getRedactedFilename('recoverable'));
             toast({ title: "Download Ready", description: "The recoverable PDF has been downloaded." });
         } catch (error: any) {
             if (error.constructor.name === 'EncryptedPDFError') {
@@ -683,7 +699,7 @@ export function RedactionTool() {
             }
     
             const pdfBytes = await newPdfDoc.save();
-            downloadPdf(pdfBytes, 'redacted-document-secure.pdf');
+            downloadPdf(pdfBytes, getRedactedFilename('secure'));
             toast({ title: "Download Ready", description: "Your securely redacted PDF has been downloaded." });
         } catch (error) {
             toast({ variant: 'destructive', title: 'Download Error', description: 'Could not generate the secure PDF.' });
