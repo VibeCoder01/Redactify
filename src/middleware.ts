@@ -2,13 +2,12 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export function middleware(request: NextRequest) {
-  const { ip, geo } = request;
+  const { geo } = request;
   const userAgent = request.headers.get('user-agent');
   
   const logData = {
     message: "User access",
     timestamp: new Date().toISOString(),
-    ip,
     userAgent,
     geo,
   };
