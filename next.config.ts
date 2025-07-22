@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  experimental: {
+    trustHostHeader: true,
+  },
   images: {
     remotePatterns: [
       {
