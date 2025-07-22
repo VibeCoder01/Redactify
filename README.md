@@ -24,6 +24,7 @@ src/
   components/        # UI components including the RedactionTool
   hooks/             # Custom React hooks
   lib/               # Utility helpers
+  middleware.ts      # Request logging
 ```
 
 ## Getting started
@@ -47,6 +48,30 @@ src/
    npm run build
    npm start
    ```
+
+## Logging
+
+The application includes a middleware that logs every incoming request to the console. The logs are structured as JSON for easier parsing and analysis.
+
+Example log entry:
+```json
+{
+  "message": "User access",
+  "timestamp": "2025-07-22T16:35:37.968Z",
+  "ip": "::1",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+  "geo": {
+    "city": "Mountain View",
+    "country": "US",
+    "region": "CA"
+  }
+}
+```
+
+To persist these logs, you can redirect the console output to a file when starting the application:
+```bash
+npm start > access.log 2>&1
+```
 
 ## License
 
